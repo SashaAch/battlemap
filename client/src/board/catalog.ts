@@ -1,4 +1,4 @@
-// Canonical board data shared by the client and the server. No DOM, no storage.
+// Canonical board data shared by the client and the server: terrain and edge types. No DOM, no storage.
 
 interface TerrainDef {
   readonly id: string;
@@ -37,3 +37,20 @@ export const TERRAIN_BY_ID: ReadonlyMap<string, TerrainDef> = new Map(TERRAIN.ma
 export function isTerrainId(value: unknown): value is TerrainId {
   return typeof value === "string" && TERRAIN_BY_ID.has(value);
 }
+
+// Edge types (plan 8.2) and their signs: wall a thick line; door a rectangle across the edge;
+// secret door a wall with the letter S; window a thin double line; bars a dashed line.
+export const EDGE_TYPES = ["wall", "door", "secret", "window", "bars"] as const;
+
+export type EdgeType = (typeof EDGE_TYPES)[number];
+
+export function isEdgeType(value: unknown): value is EdgeType {
+  return (EDGE_TYPES as readonly unknown[]).includes(value);
+}
+
+/** Colours of walls and openings, identical in every theme like the terrain. */
+export const EDGE_COLORS = {
+  line: "#26211c",
+  door: "#a8743e",
+  letter: "#f4ead2",
+} as const;

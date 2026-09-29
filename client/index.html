@@ -14,9 +14,21 @@
   <header class="toolbar">
     <button type="button" id="undo" data-i18n="toolbar.undo" data-i18n-title="toolbar.undoHint"></button>
     <button type="button" id="redo" data-i18n="toolbar.redo" data-i18n-title="toolbar.redoHint"></button>
-    <div class="group" role="group" aria-labelledby="brush-label" data-i18n-title="toolbar.brushHint">
-      <span id="brush-label" data-i18n="toolbar.brush"></span>
+    <div class="group" role="group" aria-labelledby="tools-label">
+      <span id="tools-label" data-i18n="toolbar.tool"></span>
+      <span id="tools" class="segmented"></span>
+    </div>
+    <div id="size-group" class="group" role="group" aria-labelledby="size-label" data-i18n-title="toolbar.sizeHint">
+      <span id="size-label" data-i18n="toolbar.size"></span>
       <span id="brush-sizes" class="segmented"></span>
+    </div>
+    <div id="edge-group" class="group" role="group" aria-labelledby="edge-label">
+      <span id="edge-label" data-i18n="toolbar.edgeType"></span>
+      <span id="edge-types" class="segmented"></span>
+    </div>
+    <div id="erase-group" class="group" role="group" aria-labelledby="erase-label">
+      <span id="erase-label" data-i18n="toolbar.eraseFilter"></span>
+      <span id="erase-filters" class="segmented"></span>
     </div>
     <label class="group">
       <span data-i18n="toolbar.language"></span>

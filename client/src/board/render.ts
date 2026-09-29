@@ -1,9 +1,15 @@
-// Drawing the board on a canvas: void, terrain, hatching of difficult terrain, grid, brush outline.
+// Drawing the board on a canvas: void, terrain, hatching of difficult terrain, grid, walls and openings, tool cursor.
 
-import { TERRAIN_BY_ID } from "./catalog.ts";
-import { parseCellKey, screenToWorld, worldToScreen } from "./geometry.ts";
-import type { Camera, CellSquare, Point } from "./geometry.ts";
+import { EDGE_COLORS, TERRAIN_BY_ID } from "./catalog.ts";
+import { parseCellKey, parseEdgeKey, screenToWorld, worldToScreen } from "./geometry.ts";
+import type { Camera, CellSquare, GridEdge, Point } from "./geometry.ts";
 import type { Scene } from "./store.ts";
+
+/** What the current tool shows under the pointer: the brush or eraser square, the nearest edge, the outline being drawn. */
+export type BoardCursor =
+  | { kind: "square"; square: CellSquare }
+  | { kind: "edge"; key: string }
+  | { kind: "outline"; points: readonly Point[] };
 
 /** Board interface colours taken from the current theme (themes.css). */
 export interface BoardColors {
@@ -51,7 +57,7 @@ export function drawBoard(
   scene: Scene,
   camera: Camera,
   colors: BoardColors,
-  brush: CellSquare | null,
+  cursor: BoardCursor | null,
 ): void {
   const topLeft = screenToWorld(camera, { x: 0, y: 0 });
   const bottomRight = screenToWorld(camera, { x: viewport.width, y: viewport.height });
@@ -77,13 +83,133 @@ export function drawBoard(
   for (const [color, area] of hatched) drawHatch(ctx, camera, topLeft, bottomRight, color, area);
 
   drawGrid(ctx, viewport, camera, topLeft, bottomRight, colors.grid);
+  drawEdges(ctx, scene, camera, topLeft, bottomRight);
+  if (cursor) drawCursor(ctx, camera, cursor, colors.cursor);
+}
 
-  if (brush) {
-    const [x, y, w, h] = cellRect(camera, brush.x, brush.y, brush.size);
-    ctx.strokeStyle = colors.cursor;
-    ctx.lineWidth = 2;
+function drawCursor(ctx: CanvasRenderingContext2D, camera: Camera, cursor: BoardCursor, color: string): void {
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2;
+  if (cursor.kind === "square") {
+    const [x, y, w, h] = cellRect(camera, cursor.square.x, cursor.square.y, cursor.square.size);
     ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+    return;
   }
+  ctx.beginPath();
+  if (cursor.kind === "edge") {
+    const [a, b] = edgeEnds(camera, parseEdgeKey(cursor.key));
+    ctx.lineWidth = 4;
+    ctx.moveTo(a.x, a.y);
+    ctx.lineTo(b.x, b.y);
+  } else {
+    for (const point of cursor.points) {
+      const p = worldToScreen(camera, point);
+      ctx.lineTo(p.x, p.y);
+    }
+    ctx.closePath();
+  }
+  ctx.stroke();
+}
+
+/** Screen ends of an edge: its first vertex and the next one to the right (h) or down (v). */
+function edgeEnds(camera: Camera, { dir, x, y }: GridEdge): [Point, Point] {
+  const a = worldToScreen(camera, { x, y });
+  const b = worldToScreen(camera, dir === "h" ? { x: x + 1, y } : { x, y: y + 1 });
+  return [a, b];
+}
+
+// Signs of edge types (catalog.ts). Sizes are parts of a cell, with a floor in pixels for small scales.
+const WALL_WIDTH = 0.15;
+const DOOR_FROM = 0.2; // the door leaf takes the middle of the edge, walls the ends
+const DOOR_THICKNESS = 0.3;
+const WINDOW_GAP = 0.07;
+/** Width of the window lines and of the door outline. */
+const THIN_WIDTH = 0.035;
+const BARS_WIDTH = 0.08;
+const BARS_DASH = 0.12;
+const LETTER_SIZE = 0.45;
+/** The S of a secret door sits on a dark disc of this radius, so it reads over any floor. */
+const LETTER_DISC = 0.26;
+/** Below this scale in pixels per cell the S of a secret door is not drawn. */
+const LETTER_MIN_SCALE = 16;
+
+function drawEdges(ctx: CanvasRenderingContext2D, scene: Scene, camera: Camera, topLeft: Point, bottomRight: Point): void {
+  const s = camera.scale;
+  const walls = new Path2D();
+  const doors = new Path2D();
+  const windows = new Path2D();
+  const bars = new Path2D();
+  const letters: Point[] = [];
+  const doorThickness = Math.max(4, s * DOOR_THICKNESS);
+  const windowGap = Math.max(1.5, s * WINDOW_GAP);
+
+  for (const [key, type] of Object.entries(scene.edges)) {
+    const edge = parseEdgeKey(key);
+    if (edge.x < topLeft.x - 1 || edge.x > bottomRight.x + 1 || edge.y < topLeft.y - 1 || edge.y > bottomRight.y + 1) continue;
+    const [a, b] = edgeEnds(camera, edge);
+    // The point `t` of the way along the edge, shifted by `n` pixels across it.
+    const horizontal = edge.dir === "h";
+    const at = (t: number, n = 0): Point =>
+      horizontal ? { x: a.x + s * t, y: a.y + n } : { x: a.x + n, y: a.y + s * t };
+    if (type === "wall" || type === "secret") {
+      walls.moveTo(a.x, a.y);
+      walls.lineTo(b.x, b.y);
+      if (type === "secret") letters.push(at(0.5));
+    } else if (type === "door") {
+      const leafStart = at(DOOR_FROM);
+      const leafEnd = at(1 - DOOR_FROM);
+      walls.moveTo(a.x, a.y);
+      walls.lineTo(leafStart.x, leafStart.y);
+      walls.moveTo(leafEnd.x, leafEnd.y);
+      walls.lineTo(b.x, b.y);
+      const corner = at(DOOR_FROM, -doorThickness / 2);
+      const length = s * (1 - 2 * DOOR_FROM);
+      if (horizontal) doors.rect(corner.x, corner.y, length, doorThickness);
+      else doors.rect(corner.x, corner.y, doorThickness, length);
+    } else if (type === "window") {
+      for (const n of [-windowGap, windowGap]) {
+        const from = at(0, n);
+        const to = at(1, n);
+        windows.moveTo(from.x, from.y);
+        windows.lineTo(to.x, to.y);
+      }
+    } else if (type === "bars") {
+      bars.moveTo(a.x, a.y);
+      bars.lineTo(b.x, b.y);
+    } else {
+      throw new Error(`unknown edge type in ${key}`);
+    }
+  }
+
+  ctx.save();
+  ctx.strokeStyle = EDGE_COLORS.line;
+  ctx.lineCap = "square";
+  ctx.lineWidth = Math.max(2, s * WALL_WIDTH);
+  ctx.stroke(walls);
+  ctx.lineCap = "butt";
+  ctx.lineWidth = Math.max(1, s * THIN_WIDTH);
+  ctx.stroke(windows);
+  ctx.fillStyle = EDGE_COLORS.door;
+  ctx.fill(doors);
+  ctx.stroke(doors);
+  ctx.lineWidth = Math.max(1.5, s * BARS_WIDTH);
+  ctx.setLineDash([Math.max(2, s * BARS_DASH), Math.max(2, s * BARS_DASH)]);
+  ctx.stroke(bars);
+  if (s >= LETTER_MIN_SCALE && letters.length > 0) {
+    const discs = new Path2D();
+    for (const p of letters) {
+      discs.moveTo(p.x + s * LETTER_DISC, p.y);
+      discs.arc(p.x, p.y, s * LETTER_DISC, 0, 2 * Math.PI);
+    }
+    ctx.fillStyle = EDGE_COLORS.line;
+    ctx.fill(discs);
+    ctx.font = `bold ${Math.round(s * LETTER_SIZE)}px system-ui, sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillStyle = EDGE_COLORS.letter;
+    for (const p of letters) ctx.fillText("S", p.x, p.y);
+  }
+  ctx.restore();
 }
 
 /** Screen rectangle of a square of cells, rounded so neighbouring cells meet without seams. */

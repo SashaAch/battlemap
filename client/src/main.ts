@@ -1,12 +1,12 @@
-// Start-up: interface language, theme, draft in localStorage, toolbar, palette, status bar and the board.
+// Start-up: interface language, theme, draft in localStorage, toolbar with the tools, palette, status bar and the board.
 
-import { TERRAIN } from "./board/catalog.ts";
+import { EDGE_TYPES, TERRAIN } from "./board/catalog.ts";
 import type { TerrainId } from "./board/catalog.ts";
-import { brushSquare, cellAt, DEFAULT_SCALE, panBy } from "./board/geometry.ts";
+import { cellAt, DEFAULT_SCALE, panBy } from "./board/geometry.ts";
 import { drawBoard, fitCanvas, readBoardColors } from "./board/render.ts";
 import type { BoardColors, Viewport } from "./board/render.ts";
-import { newHistory, redo, undo } from "./board/store.ts";
-import { attachTools, BRUSH_SIZES } from "./board/tools.ts";
+import { ENCLOSE_LIMIT, ERASE_FILTERS, newHistory, redo, undo } from "./board/store.ts";
+import { attachTools, BRUSH_SIZES, TOOLS } from "./board/tools.ts";
 import type { Board } from "./board/tools.ts";
 import { openDraft, saveDraft } from "./draft.ts";
 import type { DraftProblem, DraftStorage } from "./draft.ts";
@@ -58,7 +58,13 @@ function byId<T extends HTMLElement>(id: string, type: new () => T): T {
 const canvas = byId("board", HTMLCanvasElement);
 const undoButton = byId("undo", HTMLButtonElement);
 const redoButton = byId("redo", HTMLButtonElement);
+const toolList = byId("tools", HTMLElement);
+const sizeGroup = byId("size-group", HTMLElement);
 const brushSizes = byId("brush-sizes", HTMLElement);
+const edgeGroup = byId("edge-group", HTMLElement);
+const edgeTypes = byId("edge-types", HTMLElement);
+const eraseGroup = byId("erase-group", HTMLElement);
+const eraseFilters = byId("erase-filters", HTMLElement);
 const languageSelect = byId("language", HTMLSelectElement);
 const themeSelect = byId("theme", HTMLSelectElement);
 const terrainList = byId("terrain-list", HTMLElement);
@@ -96,15 +102,17 @@ function applyLanguage(): void {
 // ---- notice ----
 
 let noticeKey: Key | null = null;
+let noticeParams: Record<string, string | number> = {};
 
-function showNotice(key: Key): void {
+function showNotice(key: Key, params: Record<string, string | number> = {}): void {
   noticeKey = key;
+  noticeParams = params;
   updateNotice();
 }
 
 function updateNotice(): void {
   notice.hidden = noticeKey === null;
-  noticeText.textContent = noticeKey === null ? "" : t(noticeKey);
+  noticeText.textContent = noticeKey === null ? "" : t(noticeKey, noticeParams);
 }
 
 noticeClose.addEventListener("click", () => {
@@ -142,8 +150,11 @@ const board: Board = {
   scene: draft.scene,
   history: newHistory(),
   camera: { x: 0, y: 0, scale: DEFAULT_SCALE },
+  tool: TOOLS[0],
   terrain: TERRAIN[0].id,
   brushSize: BRUSH_SIZES[0],
+  edgeType: EDGE_TYPES[0],
+  eraseFilter: ERASE_FILTERS[0],
   hover: null,
 };
 
@@ -160,8 +171,7 @@ function redraw(): void {
     // The middle of the board stays in place when the window changes size.
     board.camera = panBy(board.camera, (next.width - viewport.width) / 2, (next.height - viewport.height) / 2);
     viewport = next;
-    const brush = board.hover ? brushSquare(board.hover, board.brushSize) : null;
-    drawBoard(ctx, viewport, board.scene, board.camera, colors, brush);
+    drawBoard(ctx, viewport, board.scene, board.camera, colors, tools.cursor());
   });
 }
 
@@ -213,6 +223,56 @@ function toggleButton(onPress: () => void): HTMLButtonElement {
   button.type = "button";
   button.addEventListener("click", onPress);
   return button;
+}
+
+/** A row of toggle buttons, one per value; returns a function that marks the current value pressed. */
+function choiceButtons<T extends string>(
+  container: HTMLElement,
+  values: readonly T[],
+  label: (value: T) => Key,
+  hint: ((value: T) => Key) | null,
+  choose: (value: T) => void,
+): (current: T) => void {
+  const buttons = values.map((value) => {
+    const button = toggleButton(() => choose(value));
+    button.dataset.i18n = label(value);
+    if (hint) button.dataset.i18nTitle = hint(value);
+    container.append(button);
+    return { value, button };
+  });
+  return (current) => {
+    for (const { value, button } of buttons) button.setAttribute("aria-pressed", String(value === current));
+  };
+}
+
+const markTool = choiceButtons(
+  toolList,
+  TOOLS,
+  (tool) => `tool.${tool}`,
+  (tool) => `tool.${tool}Hint`,
+  (tool) => {
+    board.tool = tool;
+    updateTools();
+    redraw();
+  },
+);
+
+const markEdgeType = choiceButtons(edgeTypes, EDGE_TYPES, (type) => `edge.${type}`, null, (type) => {
+  board.edgeType = type;
+  markEdgeType(type);
+});
+
+const markEraseFilter = choiceButtons(eraseFilters, ERASE_FILTERS, (filter) => `erase.${filter}`, null, (filter) => {
+  board.eraseFilter = filter;
+  markEraseFilter(filter);
+});
+
+// Each tool shows only its own options: size for the brush and the eraser, edge type for walls, filter for the eraser.
+function updateTools(): void {
+  markTool(board.tool);
+  sizeGroup.hidden = board.tool !== "brush" && board.tool !== "eraser";
+  edgeGroup.hidden = board.tool !== "walls";
+  eraseGroup.hidden = board.tool !== "eraser";
 }
 
 const sizeButtons = BRUSH_SIZES.map((size) => {
@@ -285,15 +345,20 @@ themeSelect.addEventListener("change", () => {
   setTheme(themeSelect.value);
 });
 
-attachTools(canvas, board, {
+const tools = attachTools(canvas, board, {
   redraw,
   committed: sceneChanged,
   hoverChanged: updateStatus,
   brushSizeChanged: updateBrushSizes,
+  toolChanged: updateTools,
+  enclosureTooBig: () => showNotice("notice.enclosureTooBig", { limit: ENCLOSE_LIMIT }),
   undo: doUndo,
   redo: doRedo,
 });
 
+updateTools();
+markEdgeType(board.edgeType);
+markEraseFilter(board.eraseFilter);
 updateBrushSizes();
 updateTerrainButtons();
 updateHistoryButtons();

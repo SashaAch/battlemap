@@ -1,4 +1,4 @@
-// Grid geometry: screen and world coordinates, cells and keys. No DOM, no storage.
+// Grid geometry: screen and world coordinates, cells, edges and keys, outlines. No DOM, no storage.
 // World units are cells: cell x,y covers [x, x+1) × [y, y+1), the y axis points down.
 
 export interface Point {
@@ -114,4 +114,202 @@ export function pointsAlong(from: Point, to: Point, step: number): Point[] {
     points.push({ x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t });
   }
   return points;
+}
+
+// ---- edges and outlines (plan 5.5) ----
+// Vertex x,y is the top-left corner of cell x,y. Edge `h:x,y` runs from vertex x,y to x+1,y (the top of cell x,y),
+// edge `v:x,y` from vertex x,y to x,y+1 (the left of cell x,y).
+
+type EdgeDir = "h" | "v";
+
+/** A parsed edge key: direction and the vertex it starts from. */
+export interface GridEdge {
+  dir: EdgeDir;
+  x: number;
+  y: number;
+}
+
+/** An edge between a cell of a set and a cell outside it; `inner` is the cell inside the set. */
+export interface BoundaryEdge {
+  key: string;
+  inner: Point;
+}
+
+/** Outlines with a smaller area are taken for a click on the cell under the pointer. */
+const CLICK_AREA = 0.5;
+
+export function edgeKey(dir: EdgeDir, x: number, y: number): string {
+  return `${dir}:${x + 0},${y + 0}`;
+}
+
+export function parseEdgeKey(key: string): GridEdge {
+  const { x, y } = parseCellKey(key.slice(2));
+  return { dir: key[0] === "h" ? "h" : "v", x, y };
+}
+
+/** Whether an edge key fits the key format; the bottom and right sides of the last cells do not. */
+export function isEdgeInRange(key: string): boolean {
+  const { x, y } = parseEdgeKey(key);
+  return isCellInRange(x, y);
+}
+
+/** The four sides of a cell with the neighbour across each: top, right, bottom, left. */
+function sidesOf(x: number, y: number): [string, Point][] {
+  return [
+    [edgeKey("h", x, y), { x, y: y - 1 }],
+    [edgeKey("v", x + 1, y), { x: x + 1, y }],
+    [edgeKey("h", x, y + 1), { x, y: y + 1 }],
+    [edgeKey("v", x, y), { x: x - 1, y }],
+  ];
+}
+
+/** The four sides of a cell: top, right, bottom, left. */
+export function cellEdges(x: number, y: number): string[] {
+  return sidesOf(x, y).map(([key]) => key);
+}
+
+/** Edges between a cell of the set and a cell outside it, once each. */
+export function boundaryEdges(cells: readonly Point[]): BoundaryEdge[] {
+  const inside = new Set(cells.map((c) => cellKey(c.x, c.y)));
+  const edges: BoundaryEdge[] = [];
+  for (const cell of cells) {
+    for (const [key, across] of sidesOf(cell.x, cell.y)) {
+      if (!inside.has(cellKey(across.x, across.y))) edges.push({ key, inner: cell });
+    }
+  }
+  return edges;
+}
+
+/** Edges between two cells of the set, once each. */
+export function innerEdges(cells: readonly Point[]): string[] {
+  const inside = new Set(cells.map((c) => cellKey(c.x, c.y)));
+  const edges: string[] = [];
+  for (const { x, y } of cells) {
+    // Each inner edge is the top or the left side of exactly one cell of the set.
+    if (inside.has(cellKey(x, y - 1))) edges.push(edgeKey("h", x, y));
+    if (inside.has(cellKey(x - 1, y))) edges.push(edgeKey("v", x, y));
+  }
+  return edges;
+}
+
+/** Signed area of a closed polygon (shoelace formula). */
+function polygonArea(points: readonly Point[]): number {
+  let twice = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i];
+    const b = points[(i + 1) % points.length];
+    twice += a.x * b.y - b.x * a.y;
+  }
+  return twice / 2;
+}
+
+/**
+ * Cells whose centre lies inside the outline drawn through `points` and closed back to the first point,
+ * by the even-odd rule. An outline of less than half a cell in area is a click: the cell under the last point.
+ * Cells outside the key range are left out.
+ */
+export function outlineCells(points: readonly Point[]): Point[] {
+  if (points.length === 0) return [];
+  if (Math.abs(polygonArea(points)) < CLICK_AREA) {
+    const cell = cellAt(points[points.length - 1]);
+    return isCellInRange(cell.x, cell.y) ? [cell] : [];
+  }
+  let minY = Infinity;
+  let maxY = -Infinity;
+  for (const p of points) {
+    minY = Math.min(minY, p.y);
+    maxY = Math.max(maxY, p.y);
+  }
+  const cells: Point[] = [];
+  for (let y = Math.floor(minY); y < maxY; y++) {
+    const centreY = y + 0.5;
+    // x of every crossing of the outline with the centre line of the row; a vertex on the line counts once.
+    const crossings: number[] = [];
+    for (let i = 0; i < points.length; i++) {
+      const a = points[i];
+      const b = points[(i + 1) % points.length];
+      if (a.y > centreY !== b.y > centreY) crossings.push(a.x + ((centreY - a.y) / (b.y - a.y)) * (b.x - a.x));
+    }
+    crossings.sort((p, q) => p - q);
+    for (let i = 0; i + 1 < crossings.length; i += 2) {
+      // Cells whose centre x + 0.5 lies strictly between two crossings.
+      for (let x = Math.ceil(crossings[i] - 0.5); x + 0.5 < crossings[i + 1]; x++) {
+        if (x + 0.5 > crossings[i] && isCellInRange(x, y)) cells.push({ x: x + 0, y: y + 0 });
+      }
+    }
+  }
+  return cells;
+}
+
+/** The grid vertex nearest to a world point. */
+export function snapToVertex(world: Point): Point {
+  return { x: Math.round(world.x) + 0, y: Math.round(world.y) + 0 };
+}
+
+/**
+ * Edges joining vertex `from` to vertex `to`: a straight run along a grid line,
+ * or steps that follow the line between them, one edge per unit of x and of y.
+ */
+export function edgesBetween(from: Point, to: Point): string[] {
+  const nx = Math.abs(to.x - from.x);
+  const ny = Math.abs(to.y - from.y);
+  const sx = Math.sign(to.x - from.x);
+  const sy = Math.sign(to.y - from.y);
+  const edges: string[] = [];
+  let { x, y } = from;
+  for (let i = 0, j = 0; i < nx || j < ny; ) {
+    // Step along x when the line reaches the middle of the next x unit no later than that of the next y unit.
+    if (j >= ny || (i < nx && (2 * i + 1) * ny <= (2 * j + 1) * nx)) {
+      edges.push(edgeKey("h", Math.min(x, x + sx), y));
+      x += sx;
+      i++;
+    } else {
+      edges.push(edgeKey("v", x, Math.min(y, y + sy)));
+      y += sy;
+      j++;
+    }
+  }
+  return edges;
+}
+
+/** The edge nearest to a world point: the closest of the four sides of the cell under it. */
+export function nearestEdge(world: Point): string {
+  const { x, y } = cellAt(world);
+  const fx = world.x - x;
+  const fy = world.y - y;
+  const sides: [number, string][] = [
+    [fy, edgeKey("h", x, y)],
+    [1 - fx, edgeKey("v", x + 1, y)],
+    [1 - fy, edgeKey("h", x, y + 1)],
+    [fx, edgeKey("v", x, y)],
+  ];
+  let best = sides[0];
+  for (const side of sides) if (side[0] < best[0]) best = side;
+  return best[1];
+}
+
+/**
+ * Cells reachable from `start` through side neighbours for which `belongs` holds, `start` included;
+ * empty when `start` itself does not belong, null when there are more than `limit` cells.
+ */
+export function connectedRegion(start: Point, belongs: (x: number, y: number) => boolean, limit: number): Point[] | null {
+  if (!belongs(start.x, start.y)) return [];
+  const seen = new Set([cellKey(start.x, start.y)]);
+  const region: Point[] = [start];
+  for (let i = 0; i < region.length; i++) {
+    const { x, y } = region[i];
+    for (const next of [
+      { x, y: y - 1 },
+      { x: x + 1, y },
+      { x, y: y + 1 },
+      { x: x - 1, y },
+    ]) {
+      const key = cellKey(next.x, next.y);
+      if (seen.has(key) || !isCellInRange(next.x, next.y) || !belongs(next.x, next.y)) continue;
+      if (region.length === limit) return null;
+      seen.add(key);
+      region.push(next);
+    }
+  }
+  return region;
 }

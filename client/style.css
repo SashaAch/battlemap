@@ -81,6 +81,11 @@ body {
   gap: 6px;
 }
 
+/* Tool options are shown only for the tools that use them. */
+.group[hidden] {
+  display: none;
+}
+
 .segmented {
   display: inline-flex;
   gap: 2px;
