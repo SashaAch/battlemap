@@ -1,0 +1,6 @@
+maps/
+battlemap.json
+*.exe
+dist/
+node_modules/
+.DS_Store
