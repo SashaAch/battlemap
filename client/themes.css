@@ -13,6 +13,7 @@
   --ui-focus: #2f6fdb;
   --ui-notice-bg: #fff4d6;
   --ui-notice-fg: #3d2e00;
+  --ui-error: #b3261e;
   --board-void: #f7f8f9;
   --board-grid: rgba(40, 50, 60, 0.28);
   --board-cursor: #d6336c;
@@ -30,6 +31,7 @@
   --ui-focus: #5b9cff;
   --ui-notice-bg: #3a3016;
   --ui-notice-fg: #ffe7a6;
+  --ui-error: #ff8a80;
   --board-void: #121417;
   --board-grid: rgba(220, 230, 240, 0.18);
   --board-cursor: #ff6b9a;
@@ -47,6 +49,7 @@
   --ui-focus: #8b3a1e;
   --ui-notice-bg: #fff3cf;
   --ui-notice-fg: #3b2a17;
+  --ui-error: #9b1c1c;
   --board-void: #efe2c2;
   --board-grid: rgba(80, 55, 25, 0.3);
   --board-cursor: #a4161a;
@@ -64,6 +67,7 @@
   --ui-focus: #e0a050;
   --ui-notice-bg: #3b2c1a;
   --ui-notice-fg: #f5deb3;
+  --ui-error: #ff9e80;
   --board-void: #17120f;
   --board-grid: rgba(235, 200, 150, 0.18);
   --board-cursor: #ffb347;
@@ -81,6 +85,7 @@
   --ui-focus: #00e5ff;
   --ui-notice-bg: #000000;
   --ui-notice-fg: #ffd400;
+  --ui-error: #ff6e6e;
   --board-void: #000000;
   --board-grid: rgba(255, 255, 255, 0.6);
   --board-cursor: #00e5ff;

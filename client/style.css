@@ -177,3 +177,171 @@ button[aria-pressed="true"]:hover {
     padding: 6px;
   }
 }
+
+/* ---- account (app/login.ts, app/admin.ts) ---- */
+
+.account {
+  margin-left: auto;
+}
+
+.account-name {
+  max-width: 16em;
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Covers the board, the palette and the status bar under the toolbar, so language and theme stay at hand.
+   Positioned absolutely in its grid area, it takes no grid cells from the other panels. */
+body {
+  position: relative;
+}
+
+.screen {
+  position: absolute;
+  grid-column: 1 / -1;
+  grid-row: 2 / 4;
+  inset: 0;
+  z-index: 1;
+  overflow: auto;
+  padding: 24px 16px;
+  background: var(--board-void);
+}
+
+.account[hidden],
+.screen[hidden],
+.form-error[hidden] {
+  display: none;
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto;
+  padding: 20px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+}
+
+.card.wide {
+  max-width: 900px;
+}
+
+.card > button {
+  align-self: flex-start;
+}
+
+.card h2,
+.card h3 {
+  margin: 0;
+}
+
+.card h2 {
+  font-size: 18px;
+}
+
+.card h3 {
+  margin-top: 8px;
+  font-size: 15px;
+}
+
+.card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.field .hint {
+  color: var(--ui-muted);
+}
+
+input[type="text"],
+input[type="password"],
+input[type="number"] {
+  font: inherit;
+  color: var(--ui-fg);
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+
+.form-note {
+  margin: 0;
+  padding: 8px 10px;
+  color: var(--ui-notice-fg);
+  background: var(--ui-notice-bg);
+  border-radius: 6px;
+  overflow-wrap: anywhere;
+}
+
+.form-error {
+  margin: 0;
+  color: var(--ui-error);
+}
+
+.actions,
+.row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+button.primary,
+button.primary:hover:not(:disabled) {
+  background: var(--ui-accent);
+  border-color: var(--ui-accent);
+  color: var(--ui-accent-fg);
+}
+
+.secret {
+  font-family: ui-monospace, monospace;
+  user-select: all;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+.admin-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.admin-table th,
+.admin-table td {
+  padding: 6px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--ui-border);
+  overflow-wrap: break-word;
+}
+
+.admin-table th {
+  color: var(--ui-muted);
+  font-weight: 600;
+}
+
+.inline-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 8px 12px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}

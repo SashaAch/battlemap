@@ -1,0 +1,340 @@
+// The SQLite database (plan 6.5, R17). Every query of the server lives here; nothing else touches node:sqlite.
+// The schema version is PRAGMA user_version; migrations run in order, each in its own transaction.
+
+import { DatabaseSync } from "node:sqlite";
+import type { SQLInputValue, SQLOutputValue, StatementSync } from "node:sqlite";
+
+/**
+ * Migration N (1-based) brings the schema from version N-1 to N. Once a release with a migration is installed
+ * anywhere, that migration is never edited again: a schema change becomes the next migration. Migration 1 was
+ * still changed in place during stage 4, because no database existed yet.
+ */
+export const MIGRATIONS: readonly string[] = [
+  `
+  CREATE TABLE users (
+    id INTEGER PRIMARY KEY,
+    login TEXT NOT NULL UNIQUE,
+    display_name TEXT NOT NULL,
+    pass_hash BLOB NOT NULL,
+    pass_salt BLOB NOT NULL,
+    pass_params TEXT NOT NULL,
+    pass_version INTEGER NOT NULL DEFAULT 1,
+    role TEXT NOT NULL CHECK (role IN ('admin', 'user')),
+    must_change_password INTEGER NOT NULL DEFAULT 0 CHECK (must_change_password IN (0, 1)),
+    disabled INTEGER NOT NULL DEFAULT 0 CHECK (disabled IN (0, 1)),
+    settings_json TEXT NOT NULL DEFAULT '{}',
+    created_at INTEGER NOT NULL
+  ) STRICT;
+
+  CREATE TABLE sessions (
+    token_hash BLOB PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES users (id),
+    pass_version INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX sessions_by_user ON sessions (user_id);
+
+  CREATE TABLE invites (
+    code_hash BLOB PRIMARY KEY,
+    kind TEXT NOT NULL CHECK (kind IN ('register', 'game')),
+    game_id INTEGER,
+    created_by INTEGER NOT NULL REFERENCES users (id),
+    expires_at INTEGER NOT NULL,
+    max_uses INTEGER NOT NULL CHECK (max_uses >= 1),
+    uses INTEGER NOT NULL DEFAULT 0 CHECK (uses >= 0)
+  ) STRICT;
+  `,
+];
+
+/** Brings the schema up to `migrations.length`; refuses a database written by a newer server. */
+export function runMigrations(db: DatabaseSync, migrations: readonly string[]): void {
+  const version = Number(db.prepare("PRAGMA user_version").get()?.user_version ?? 0);
+  if (version > migrations.length) {
+    throw new Error(`the database has schema version ${version}, this server knows up to ${migrations.length}`);
+  }
+  for (let next = version + 1; next <= migrations.length; next++) {
+    db.exec("BEGIN IMMEDIATE");
+    try {
+      db.exec(migrations[next - 1]);
+      db.exec(`PRAGMA user_version = ${next}`);
+      db.exec("COMMIT");
+    } catch (error) {
+      if (db.isTransaction) db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+}
+
+export type Role = "admin" | "user";
+export type InviteKind = "register" | "game";
+
+export interface User {
+  id: number;
+  login: string;
+  displayName: string;
+  passHash: Uint8Array;
+  passSalt: Uint8Array;
+  /** How pass_hash was made, e.g. `scrypt:32768:8:1` (auth.ts), so the cost can be raised later. */
+  passParams: string;
+  /** Goes up with every new password (change or reset); a session made under another version is not valid. */
+  passVersion: number;
+  role: Role;
+  mustChangePassword: boolean;
+  disabled: boolean;
+  /** JSON text of the account settings (language, theme). */
+  settingsJson: string;
+  createdAt: number;
+}
+
+/** A password as kept in the database: never the password itself. */
+export interface StoredPassword {
+  passHash: Uint8Array;
+  passSalt: Uint8Array;
+  /** How pass_hash was made, e.g. `scrypt:32768:8:1` (auth.ts), so the cost can be raised later. */
+  passParams: string;
+}
+
+export interface NewUser extends StoredPassword {
+  login: string;
+  displayName: string;
+  role: Role;
+  mustChangePassword: boolean;
+  createdAt: number;
+}
+
+export interface Session {
+  userId: number;
+  /** The user's password version when the session was made. */
+  passVersion: number;
+  expiresAt: number;
+}
+
+type Row = Record<string, SQLOutputValue>;
+
+function toUser(row: Row): User {
+  return {
+    id: Number(row.id),
+    login: String(row.login),
+    displayName: String(row.display_name),
+    passHash: row.pass_hash as Uint8Array,
+    passSalt: row.pass_salt as Uint8Array,
+    passParams: String(row.pass_params),
+    passVersion: Number(row.pass_version),
+    role: row.role === "admin" ? "admin" : "user",
+    mustChangePassword: row.must_change_password === 1,
+    disabled: row.disabled === 1,
+    settingsJson: String(row.settings_json),
+    createdAt: Number(row.created_at),
+  };
+}
+
+const flag = (value: boolean): number => (value ? 1 : 0);
+
+export class Database {
+  readonly #db: DatabaseSync;
+  readonly #statements = new Map<string, StatementSync>();
+
+  /** Opens (or creates) the database file and brings its schema up to date. */
+  constructor(file: string) {
+    this.#db = new DatabaseSync(file, { timeout: 5000 });
+    try {
+      runMigrations(this.#db, MIGRATIONS);
+    } catch (error) {
+      this.#db.close();
+      throw error;
+    }
+  }
+
+  close(): void {
+    this.#db.close();
+  }
+
+  /** Runs `body` in one transaction. `body` must be synchronous. */
+  transaction<T>(body: () => T): T {
+    this.#db.exec("BEGIN IMMEDIATE");
+    try {
+      const result = body();
+      this.#db.exec("COMMIT");
+      return result;
+    } catch (error) {
+      if (this.#db.isTransaction) this.#db.exec("ROLLBACK");
+      throw error;
+    }
+  }
+
+  #statement(sql: string): StatementSync {
+    let statement = this.#statements.get(sql);
+    if (!statement) {
+      statement = this.#db.prepare(sql);
+      this.#statements.set(sql, statement);
+    }
+    return statement;
+  }
+
+  #get(sql: string, ...params: SQLInputValue[]): Row | undefined {
+    return this.#statement(sql).get(...params);
+  }
+
+  #all(sql: string, ...params: SQLInputValue[]): Row[] {
+    return this.#statement(sql).all(...params);
+  }
+
+  #run(sql: string, ...params: SQLInputValue[]): number {
+    return Number(this.#statement(sql).run(...params).changes);
+  }
+
+  // ---- users ----
+
+  countUsers(): number {
+    return Number(this.#get("SELECT count(*) AS n FROM users")?.n ?? 0);
+  }
+
+  findUserById(id: number): User | undefined {
+    const row = this.#get("SELECT * FROM users WHERE id = ?", id);
+    return row && toUser(row);
+  }
+
+  findUserByLogin(login: string): User | undefined {
+    const row = this.#get("SELECT * FROM users WHERE login = ?", login);
+    return row && toUser(row);
+  }
+
+  listUsers(): User[] {
+    return this.#all("SELECT * FROM users ORDER BY id").map(toUser);
+  }
+
+  insertUser(user: NewUser): User {
+    const row = this.#get(
+      `INSERT INTO users (login, display_name, pass_hash, pass_salt, pass_params, role, must_change_password, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+      user.login,
+      user.displayName,
+      user.passHash,
+      user.passSalt,
+      user.passParams,
+      user.role,
+      flag(user.mustChangePassword),
+      user.createdAt,
+    );
+    if (!row) throw new Error("INSERT ... RETURNING gave no row");
+    return toUser(row);
+  }
+
+  /** A new password: the password version goes up, so sessions made under the old one stop being valid. */
+  setPassword(id: number, password: StoredPassword, mustChangePassword: boolean): void {
+    this.#run(
+      `UPDATE users SET pass_hash = ?, pass_salt = ?, pass_params = ?, must_change_password = ?, pass_version = pass_version + 1
+       WHERE id = ?`,
+      password.passHash,
+      password.passSalt,
+      password.passParams,
+      flag(mustChangePassword),
+      id,
+    );
+  }
+
+  /**
+   * The same password hashed with the current parameters; the version stays. Only if the hash is still `oldHash`,
+   * so a change or reset that came in between is not overwritten.
+   */
+  rehashPassword(id: number, oldHash: Uint8Array, password: StoredPassword): void {
+    this.#run(
+      "UPDATE users SET pass_hash = ?, pass_salt = ?, pass_params = ? WHERE id = ? AND pass_hash = ?",
+      password.passHash,
+      password.passSalt,
+      password.passParams,
+      id,
+      oldHash,
+    );
+  }
+
+  setRole(id: number, role: Role): void {
+    this.#run("UPDATE users SET role = ? WHERE id = ?", role, id);
+  }
+
+  setDisabled(id: number, disabled: boolean): void {
+    this.#run("UPDATE users SET disabled = ? WHERE id = ?", flag(disabled), id);
+  }
+
+  setSettings(id: number, settingsJson: string): void {
+    this.#run("UPDATE users SET settings_json = ? WHERE id = ?", settingsJson, id);
+  }
+
+  // ---- sessions: only the SHA-256 of the token is stored ----
+
+  insertSession(tokenHash: Uint8Array, userId: number, passVersion: number, expiresAt: number): void {
+    this.#run(
+      "INSERT INTO sessions (token_hash, user_id, pass_version, expires_at) VALUES (?, ?, ?, ?)",
+      tokenHash,
+      userId,
+      passVersion,
+      expiresAt,
+    );
+  }
+
+  /** Moves the session doing a password change to the new password version. */
+  setSessionPassVersion(tokenHash: Uint8Array, passVersion: number): void {
+    this.#run("UPDATE sessions SET pass_version = ? WHERE token_hash = ?", passVersion, tokenHash);
+  }
+
+  findSession(tokenHash: Uint8Array): Session | undefined {
+    const row = this.#get("SELECT user_id, pass_version, expires_at FROM sessions WHERE token_hash = ?", tokenHash);
+    return row && { userId: Number(row.user_id), passVersion: Number(row.pass_version), expiresAt: Number(row.expires_at) };
+  }
+
+  setSessionExpiry(tokenHash: Uint8Array, expiresAt: number): void {
+    this.#run("UPDATE sessions SET expires_at = ? WHERE token_hash = ?", expiresAt, tokenHash);
+  }
+
+  deleteSession(tokenHash: Uint8Array): void {
+    this.#run("DELETE FROM sessions WHERE token_hash = ?", tokenHash);
+  }
+
+  /** Deletes every session of the user, except `keep` when given (the session doing the change). */
+  deleteUserSessions(userId: number, keep?: Uint8Array): void {
+    if (keep) this.#run("DELETE FROM sessions WHERE user_id = ? AND token_hash <> ?", userId, keep);
+    else this.#run("DELETE FROM sessions WHERE user_id = ?", userId);
+  }
+
+  // ---- invites: only the SHA-256 of the code is stored ----
+
+  insertInvite(codeHash: Uint8Array, kind: InviteKind, gameId: number | null, createdBy: number, expiresAt: number, maxUses: number): void {
+    this.#run(
+      "INSERT INTO invites (code_hash, kind, game_id, created_by, expires_at, max_uses) VALUES (?, ?, ?, ?, ?, ?)",
+      codeHash,
+      kind,
+      gameId,
+      createdBy,
+      expiresAt,
+      maxUses,
+    );
+  }
+
+  /** The invite exists, has not expired and has uses left. */
+  hasInvite(codeHash: Uint8Array, kind: InviteKind, now: number): boolean {
+    const row = this.#get(
+      "SELECT 1 AS found FROM invites WHERE code_hash = ? AND kind = ? AND expires_at > ? AND uses < max_uses",
+      codeHash,
+      kind,
+      now,
+    );
+    return row !== undefined;
+  }
+
+  /** Uses the invite once, in one statement, so parallel requests never exceed max_uses; false when it cannot be used. */
+  useInvite(codeHash: Uint8Array, kind: InviteKind, now: number): boolean {
+    const changed = this.#run(
+      "UPDATE invites SET uses = uses + 1 WHERE code_hash = ? AND kind = ? AND expires_at > ? AND uses < max_uses",
+      codeHash,
+      kind,
+      now,
+    );
+    return changed === 1;
+  }
+
+  /** Drops expired sessions and invites, and invites with no uses left. */
+  deleteExpired(now: number): void {
+    this.#run("DELETE FROM sessions WHERE expires_at <= ?", now);
+    this.#run("DELETE FROM invites WHERE expires_at <= ? OR uses >= max_uses", now);
+  }
+}
