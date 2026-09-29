@@ -65,6 +65,10 @@ export interface GameInfo {
   isOwner: boolean;
   /** Changes scenes, invites, members and the master. */
   editor: boolean;
+  /** The master of a game, the owner of a personal campaign (R41). */
+  canDelete: boolean;
+  /** Anyone but the master and the owner of a personal campaign (R41). */
+  canLeave: boolean;
   activeSceneId: number | null;
   members: MemberInfo[];
   scenes: SceneSummary[];

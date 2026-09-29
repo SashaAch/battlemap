@@ -42,6 +42,9 @@ export interface GameView {
 
 const GAME_HASH = /^#game=([1-9][0-9]{0,14})$/;
 const IDLE_CHECK_MS = 100;
+/** The defaults and bounds of a registration code (admin.ts, server/auth.ts), which a game invite follows (R41). */
+const INVITE_USES = 1;
+const INVITE_MAX_USES = 1000;
 const INVITE_DAYS = 7;
 const INVITE_MAX_DAYS = 365;
 
@@ -201,8 +204,30 @@ export function startGame(hooks: GameHooks): GameView {
     panel.append(title, labelled("p", game.kind === "gm" ? "games.kind.gm" : "games.kind.personal", "muted"));
     panel.append(game.editor ? scenesSection(game) : playerSection(game), membersSection(game));
     if (game.editor) panel.append(inviteSection(game));
-    if (game.isOwner) {
-      panel.append(
+    const actions = document.createElement("div");
+    actions.className = "actions";
+    // The owner of a personal campaign takes mastery back from the master they named (R41).
+    if (game.kind === "personal" && game.isOwner && game.gmId !== null) {
+      actions.append(
+        button("game.takeMastery", () => {
+          if (!confirm(t("game.confirmTakeMastery"))) return;
+          act(game.id, request("DELETE", `api/games/${game.id}/master`), () => void load(game.id, shownScene));
+        }),
+      );
+    }
+    if (game.canLeave) {
+      actions.append(
+        button("game.leave", () => {
+          if (!confirm(t("game.confirmLeave", { title: game.title }))) return;
+          act(game.id, request("POST", `api/games/${game.id}/leave`), () => {
+            close();
+            hooks.showGames();
+          });
+        }),
+      );
+    }
+    if (game.canDelete) {
+      actions.append(
         button("game.delete", () => {
           if (!confirm(t("game.confirmDelete", { title: game.title }))) return;
           act(game.id, request("DELETE", `api/games/${game.id}`), () => {
@@ -212,6 +237,7 @@ export function startGame(hooks: GameHooks): GameView {
         }),
       );
     }
+    if (actions.childElementCount > 0) panel.append(actions);
   }
 
   function section(titleKey: Key): HTMLElement {
@@ -334,24 +360,28 @@ export function startGame(hooks: GameHooks): GameView {
     return element;
   }
 
-  /** An invite code for any number of players within some days; it is shown only once, the server keeps its hash. */
+  /** An invite code for some joins within some days, like a registration code; shown only once, the server keeps its hash. */
   function inviteSection(game: GameInfo): HTMLElement {
     const element = section("game.invite");
     const form = document.createElement("form");
     form.className = "inline-form";
+    const uses = field("game.inviteUses", { type: "number", value: String(INVITE_USES), min: 1, max: INVITE_MAX_USES });
     const days = field("game.inviteDays", { type: "number", value: String(INVITE_DAYS), min: 1, max: INVITE_MAX_DAYS });
     const submit = labelled("button", "game.createInvite", "primary");
     submit.type = "submit";
-    form.append(days.wrap, submit);
+    form.append(uses.wrap, days.wrap, submit);
     const result = document.createElement("div");
     result.setAttribute("aria-live", "polite");
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      const reply = request<{ code: string; expiresAt: number }>("POST", `api/games/${game.id}/invites`, { days: Number(days.input.value) });
-      act(game.id, reply, ({ code, expiresAt }) => {
+      const reply = request<{ code: string; expiresAt: number; maxUses: number }>("POST", `api/games/${game.id}/invites`, {
+        maxUses: Number(uses.input.value),
+        days: Number(days.input.value),
+      });
+      act(game.id, reply, ({ code, expiresAt, maxUses }) => {
         const link = `${location.origin}${location.pathname}#join=${code}`;
         const until = new Date(expiresAt).toLocaleString(getLang());
-        result.replaceChildren(secretLine("game.inviteCode", { until }, code), secretLine("game.inviteLink", {}, link));
+        result.replaceChildren(secretLine("game.inviteCode", { uses: String(maxUses), until }, code), secretLine("game.inviteLink", {}, link));
       });
     });
     element.append(form, result);

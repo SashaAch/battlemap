@@ -6,10 +6,12 @@
 // - the editor of a game changes its scenes, invites, members and master: the master, or the owner of a
 //   personal campaign while it has no master (R24); any other member gets 403;
 // - a player sees only the current scene, and only while it is visible; other scenes are 404 to them;
-// - only the owner deletes the game.
+// - the game is deleted by its current master, a personal campaign only by its owner (R41);
+// - a member leaves on their own, but not the master (they hand the game over first) nor the owner of a
+//   personal campaign (they delete it); the owner of a personal campaign takes mastery back (R41).
 
 import { applyPatch, newScene, parseScene, SceneError, validatePatch } from "../client/src/board/store.ts";
-import { checkName, checkWhole, DAY_MS, INVITE_MAX_DAYS, LIMIT_WINDOW_MS, newInviteCode, sha256 } from "./auth.ts";
+import { checkName, checkWhole, DAY_MS, INVITE_MAX_DAYS, INVITE_MAX_USES, LIMIT_WINDOW_MS, newInviteCode, sha256 } from "./auth.ts";
 import type { Database, Game, GameKind, Member, MemberRole, MyGame, SceneInfo, SceneRecord, User } from "./db.ts";
 import { ApiError } from "./errors.ts";
 import { MIB } from "./http.ts";
@@ -17,9 +19,7 @@ import { addressKey, AttemptLimiter } from "./limits.ts";
 
 /** Plan 6.2: a scene is at most 2 MiB as JSON. */
 const SCENE_MAX_BYTES = 2 * MIB;
-/** A game invite serves any number of players until it expires; this bound only keeps the counter sane. */
-const GAME_INVITE_MAX_USES = 1_000_000;
-/** Failed joins (unknown or expired code) per address in LIMIT_WINDOW_MS, like failed sign-ins (R39). */
+/** Failed joins (unknown, used up or expired code) per address in LIMIT_WINDOW_MS, like failed sign-ins (R39). */
 export const MAX_JOIN_FAILURES_PER_ADDRESS = 10;
 
 // ---- what the API shows ----
@@ -42,6 +42,10 @@ interface Access {
   role: MemberRole;
   /** Changes scenes, invites, members and the master. */
   editor: boolean;
+  /** Deletes the game: the master of a game, the owner of a personal campaign (R41). */
+  deleter: boolean;
+  /** May leave the game: anyone but the master and the owner of a personal campaign (R41). */
+  mayLeave: boolean;
 }
 
 export class Games {
@@ -62,7 +66,8 @@ export class Games {
     const role = game && this.#db.findMemberRole(gameId, user.id);
     if (!game || !role) throw new ApiError("game.notFound");
     const editor = game.gmId === null ? game.ownerId === user.id : game.gmId === user.id;
-    return { game, role, editor };
+    const keeper = game.kind === "personal" ? game.ownerId === user.id : game.gmId === user.id;
+    return { game, role, editor, deleter: keeper, mayLeave: !keeper && game.gmId !== user.id };
   }
 
   #editor(user: User, gameId: number): Access {
@@ -130,6 +135,8 @@ export class Games {
       role: access.role,
       isOwner: game.ownerId === user.id,
       editor: access.editor,
+      canDelete: access.deleter,
+      canLeave: access.mayLeave,
       // A player is not told which scene is current while it is hidden.
       activeSceneId: scenes.some((scene) => scene.id === game.activeSceneId) ? game.activeSceneId : null,
       members: this.#db.listMembers(game.id).map(memberView),
@@ -138,26 +145,53 @@ export class Games {
   }
 
   deleteGame(user: User, gameId: number): void {
-    const { game } = this.#access(user, gameId);
-    if (game.ownerId !== user.id) throw new ApiError("auth.forbidden");
+    const { game, deleter } = this.#access(user, gameId);
+    if (!deleter) throw new ApiError("auth.forbidden");
     this.#db.transaction(() => this.#db.deleteGame(game.id));
+  }
+
+  /** The member leaves the game; the master and the owner of a personal campaign cannot (R41). */
+  leave(user: User, gameId: number): void {
+    const { game, mayLeave } = this.#access(user, gameId);
+    if (!mayLeave) throw new ApiError("auth.forbidden");
+    this.#db.deleteMember(game.id, user.id);
+  }
+
+  /**
+   * The owner of a personal campaign takes mastery back (R41): the campaign has no master again, the owner edits
+   * its scenes and the former master stays as a player. A game with a master has no such owner right: 403.
+   */
+  takeMastery(user: User, gameId: number): void {
+    const { game } = this.#access(user, gameId);
+    if (game.kind !== "personal" || game.ownerId !== user.id) throw new ApiError("auth.forbidden");
+    if (game.gmId === null) return;
+    const formerMaster = game.gmId;
+    this.#db.transaction(() => {
+      this.#db.setMemberRole(game.id, formerMaster, "player");
+      this.#db.setGameMaster(game.id, null);
+    });
   }
 
   // ---- invites and members ----
 
-  /** An invite code for `days` days, any number of players until then. Only its hash is stored; the code is shown once. */
-  createInvite(user: User, gameId: number, days: number): { code: string; expiresAt: number } {
+  /**
+   * An invite code for `maxUses` joins within `days` days, with the bounds of a registration code (R38, R41).
+   * Only its hash is stored; the code is shown once.
+   */
+  createInvite(user: User, gameId: number, maxUses: number, days: number): { code: string; expiresAt: number; maxUses: number } {
     const { game } = this.#editor(user, gameId);
+    checkWhole(maxUses, INVITE_MAX_USES);
     checkWhole(days, INVITE_MAX_DAYS);
     const code = newInviteCode();
     const expiresAt = this.#now() + days * DAY_MS;
-    this.#db.insertInvite(sha256(code), "game", game.id, user.id, expiresAt, GAME_INVITE_MAX_USES);
-    return { code, expiresAt };
+    this.#db.insertInvite(sha256(code), "game", game.id, user.id, expiresAt, maxUses);
+    return { code, expiresAt, maxUses };
   }
 
   /**
-   * Joins the game of an invite as a player; a member joining again stays as they are. An unknown code is 404,
-   * an expired one 410; both count against the address, and over the limit even a good code gets 429.
+   * Joins the game of an invite as a player; a member joining again stays as they are and uses nothing up.
+   * An unknown code is 404, and so is a used-up one, as a registration code answers the same for both (R38);
+   * an expired one is 410. Every failure counts against the address; over the limit even a good code gets 429.
    */
   join(user: User, code: string, address: string): { gameId: number } {
     const now = this.#now();
@@ -165,11 +199,12 @@ export class Games {
     if (!this.#joinFailures.take(key, now)) throw new ApiError("invite.tooManyAttempts");
     const codeHash = sha256(code);
     const invite = this.#db.findGameInvite(codeHash);
-    if (!invite) throw new ApiError("invite.notFound");
-    if (invite.expiresAt <= now || invite.uses >= invite.maxUses) throw new ApiError("invite.expired");
+    if (!invite || invite.uses >= invite.maxUses) throw new ApiError("invite.notFound");
+    if (invite.expiresAt <= now) throw new ApiError("invite.expired");
     this.#db.transaction(() => {
       if (this.#db.findMemberRole(invite.gameId, user.id)) return;
-      if (!this.#db.useInvite(codeHash, "game", now)) throw new ApiError("invite.expired");
+      // Parallel joins may have used the last one up in between.
+      if (!this.#db.useInvite(codeHash, "game", now)) throw new ApiError("invite.notFound");
       this.#db.insertMember(invite.gameId, user.id, "player", now);
     });
     this.#joinFailures.giveBack(key, now);
@@ -177,13 +212,14 @@ export class Games {
   }
 
   /**
-   * Removes a member other than the owner and the master. The game's invites are dropped too, so the removed
-   * user cannot come back with a code they still have; the editor makes a new one for the others.
+   * Removes a member other than the master and the owner of a personal campaign. The game's invites are dropped
+   * too, so the removed user cannot come back with a code they still have; the editor makes a new one for the others.
    */
   removeMember(user: User, gameId: number, memberId: number): void {
     const { game } = this.#editor(user, gameId);
     if (!this.#db.findMemberRole(game.id, memberId)) throw new ApiError("member.notFound");
-    if (memberId === game.ownerId || memberId === game.gmId) throw new ApiError("member.protected");
+    const campaignOwner = game.kind === "personal" && memberId === game.ownerId;
+    if (campaignOwner || memberId === game.gmId) throw new ApiError("member.protected");
     this.#db.transaction(() => {
       this.#db.deleteMember(game.id, memberId);
       this.#db.deleteGameInvites(game.id);

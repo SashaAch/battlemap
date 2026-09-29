@@ -114,7 +114,8 @@ const CODE_PART = /^[a-z0-9]{1,64}$/;
  * a record id; anything else must be equal. No route, including a malformed id, is 404.
  */
 function matchRoute(routes: Map<string, Route>, method: string, urlPath: string): { route: Route; params: Record<string, string> } | null {
-  const exact = routes.get(`${method} ${urlPath}`);
+  // A path with ":" is never looked up as is: a literal `/api/join/:code` must not reach a route without its parameters.
+  const exact = urlPath.includes(":") ? undefined : routes.get(`${method} ${urlPath}`);
   if (exact) return { route: exact, params: {} };
   const parts = urlPath.split("/");
   for (const [key, route] of routes) {
@@ -314,7 +315,7 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games): M
         access: "user",
         limit: BODY_LIMIT,
         handle(call) {
-          return { status: 201, body: games.createInvite(user(call), gameId(call), idField(call.body, "days")) };
+          return { status: 201, body: games.createInvite(user(call), gameId(call), idField(call.body, "maxUses"), idField(call.body, "days")) };
         },
       },
     ],
@@ -336,6 +337,28 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games): M
         handle(call) {
           games.setMaster(user(call), gameId(call), idField(call.body, "userId"));
           return { status: 200, body: games.getGame(user(call), gameId(call)) };
+        },
+      },
+    ],
+    [
+      "DELETE /api/games/:id/master",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          games.takeMastery(user(call), gameId(call));
+          return { status: 200, body: games.getGame(user(call), gameId(call)) };
+        },
+      },
+    ],
+    [
+      "POST /api/games/:id/leave",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          games.leave(user(call), gameId(call));
+          return { status: 204 };
         },
       },
     ],

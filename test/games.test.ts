@@ -107,8 +107,8 @@ async function createScene(site: Site, gameId: number, editor: Person, name = "�
   return reply.body.id;
 }
 
-async function invite(site: Site, gameId: number, editor: Person, days = 7): Promise<string> {
-  const reply = await call(site, "POST", `/api/games/${gameId}/invites`, editor.cookie, { days });
+async function invite(site: Site, gameId: number, editor: Person, days = 7, maxUses = 10): Promise<string> {
+  const reply = await call(site, "POST", `/api/games/${gameId}/invites`, editor.cookie, { maxUses, days });
   assert.equal(reply.status, 201);
   assert.match(reply.body.code, /^[a-z0-9]{16}$/);
   return reply.body.code;
@@ -144,10 +144,13 @@ function gameRequests(gameId: number, sceneId: number, userId: number): [string,
     ["PUT", scene, { name: "Другая", visible: false }],
     ["POST", `${scene}/patch`, { patch: FLOOR }],
     ["POST", `${scene}/activate`, {}],
-    ["POST", `/api/games/${gameId}/invites`, { days: 1 }],
+    ["POST", `/api/games/${gameId}/invites`, { maxUses: 1, days: 1 }],
     ["POST", `/api/games/${gameId}/master`, { userId }],
+    ["DELETE", `/api/games/${gameId}/master`, {}],
     ["DELETE", `/api/games/${gameId}/members/${userId}`, {}],
     ["DELETE", `/api/games/${gameId}`, {}],
+    // Last: a player may do it, and then is no longer a member.
+    ["POST", `/api/games/${gameId}/leave`, {}],
   ];
 }
 
@@ -189,8 +192,9 @@ describe("games and my games", () => {
     const sceneId = await createScene(site, gameId, users.anna);
     assertError(await call(site, "PUT", `/api/games/${gameId}/scenes/${sceneId}`, users.anna.cookie, { name: "" }), "scene.name");
     assertError(await call(site, "PUT", `/api/games/${gameId}/scenes/${sceneId}`, users.anna.cookie, { visible: "yes" }), "request.format");
-    assertError(await call(site, "POST", `/api/games/${gameId}/invites`, users.anna.cookie, { days: 366 }), "request.format");
-    assertError(await call(site, "POST", `/api/games/${gameId}/invites`, users.anna.cookie, { days: 0 }), "request.format");
+    for (const body of [{ maxUses: 1, days: 366 }, { maxUses: 1, days: 0 }, { maxUses: 1001, days: 1 }, { maxUses: 0, days: 1 }, { days: 1 }]) {
+      assertError(await call(site, "POST", `/api/games/${gameId}/invites`, users.anna.cookie, body), "request.format", JSON.stringify(body));
+    }
   });
 
   test("after a restart my games and the current scene are the same", async () => {
@@ -247,7 +251,7 @@ describe("rights in a game", () => {
   test("a player cannot create a scene (403), nor change, show, activate, invite, remove or hand over", async () => {
     const { site, users } = await siteWith("admin", "gm", "pat", "sam");
     const { gameId, sceneId } = await playedGame(site, users.gm, users.pat, users.sam);
-    const refused = gameRequests(gameId, sceneId, users.sam.id).filter(([method]) => method !== "GET");
+    const refused = gameRequests(gameId, sceneId, users.sam.id).filter(([method, url]) => method !== "GET" && !url.endsWith("/leave"));
     for (const [method, url, body] of refused) {
       assertError(await call(site, method, url, users.pat.cookie, body), "auth.forbidden", `${method} ${url}`);
     }
@@ -301,6 +305,19 @@ describe("rights in a game", () => {
     assertError(await call(site, "POST", "/api/join/ABC", users.gm.cookie), "request.notFound");
     assertError(await call(site, "POST", "/api/join/a-b", users.gm.cookie), "request.notFound");
   });
+
+  test("route patterns sent literally are unknown requests, and a literal code does not use up an attempt", async () => {
+    const { site, users } = await siteWith("admin", "gm", "pat");
+    const gameId = await createGame(site, users.gm);
+    const code = await invite(site, gameId, users.gm);
+    for (let i = 0; i <= MAX_JOIN_FAILURES_PER_ADDRESS; i++) {
+      assertError(await call(site, "POST", "/api/join/:code", users.pat.cookie), "request.notFound");
+    }
+    assertError(await call(site, "GET", "/api/games/:id", users.gm.cookie), "request.notFound");
+    assertError(await call(site, "GET", "/api/games/:id/scenes/:sid", users.gm.cookie), "request.notFound");
+    assertError(await call(site, "DELETE", `/api/games/${gameId}/members/:user`, users.gm.cookie), "request.notFound");
+    assert.equal((await join(site, code, users.pat)).status, 200);
+  });
 });
 
 describe("invites", () => {
@@ -325,14 +342,39 @@ describe("invites", () => {
     assert.deepEqual(list.body.games.map((entry: any) => [entry.id, entry.role, entry.isOwner]), [[gameId, "player", false]]);
   });
 
-  test("an expired invite is 410, an unknown one 404", async () => {
+  test("an expired invite is 410, also after a restart; an unknown one 404", async () => {
     const { site, users } = await siteWith("admin", "gm", "pat");
     const gameId = await createGame(site, users.gm);
     const code = await invite(site, gameId, users.gm, 2);
     site.clock.now += 2 * DAY_MS;
     assertError(await join(site, code, users.pat), "invite.expired");
+    await restart(site);
+    assertError(await join(site, code, users.pat), "invite.expired");
     assertError(await join(site, "abcdefghijkmnpqr", users.pat), "invite.notFound");
     assertError(await call(site, "GET", `/api/games/${gameId}`, users.pat.cookie), "game.notFound");
+  });
+
+  test("a code serves as many joins as the master allows; joining again uses none up; a used-up code is 404", async () => {
+    const { site, users } = await siteWith("admin", "gm", "pat", "sam", "eve");
+    const gameId = await createGame(site, users.gm);
+    const code = await invite(site, gameId, users.gm, 7, 2);
+    assert.equal((await join(site, code, users.pat)).status, 200);
+    assert.equal((await join(site, code, users.pat)).status, 200);
+    assert.equal((await join(site, code, users.gm)).status, 200);
+    assert.equal((await join(site, code, users.sam)).status, 200, "the second join is still there");
+    assertError(await join(site, code, users.eve), "invite.notFound");
+    await restart(site);
+    assertError(await join(site, code, users.eve), "invite.notFound", "the same after a restart");
+    assert.equal((await call(site, "GET", `/api/games/${gameId}`, users.gm.cookie)).body.members.length, 3);
+  });
+
+  test("parallel joins never pass the number of joins", async () => {
+    const { site, users } = await siteWith("admin", "gm", "pat", "sam", "eve");
+    const gameId = await createGame(site, users.gm);
+    const code = await invite(site, gameId, users.gm, 7, 1);
+    const replies = await Promise.all([users.pat, users.sam, users.eve].map((person) => join(site, code, person)));
+    assert.deepEqual(replies.map((reply) => reply.status).sort(), [200, 404, 404]);
+    assert.equal((await call(site, "GET", `/api/games/${gameId}`, users.gm.cookie)).body.members.length, 2);
   });
 
   test("a registration code does not open a game, and a game code does not register", async () => {
@@ -392,13 +434,65 @@ describe("members and the master", () => {
     assertError(await call(site, "DELETE", `/api/games/${gameId}/members/${users.pat.id}`, users.gm.cookie), "member.notFound");
   });
 
-  test("the owner and the master cannot be removed", async () => {
-    const { site, users } = await siteWith("admin", "gm", "pat");
+  test("the master and the owner of a personal campaign cannot be removed; the creator of a game, once not master, can", async () => {
+    const { site, users } = await siteWith("admin", "gm", "pat", "anna");
     const { gameId } = await playedGame(site, users.gm, users.pat);
     assertError(await call(site, "DELETE", `/api/games/${gameId}/members/${users.gm.id}`, users.gm.cookie), "member.protected");
     assert.equal((await call(site, "POST", `/api/games/${gameId}/master`, users.gm.cookie, { userId: users.pat.id })).status, 200);
-    assertError(await call(site, "DELETE", `/api/games/${gameId}/members/${users.gm.id}`, users.pat.cookie), "member.protected", "the owner");
     assertError(await call(site, "DELETE", `/api/games/${gameId}/members/${users.pat.id}`, users.pat.cookie), "member.protected", "the master");
+    assert.equal((await call(site, "DELETE", `/api/games/${gameId}/members/${users.gm.id}`, users.pat.cookie)).status, 204);
+
+    const campaign = await createGame(site, users.anna, "personal");
+    await join(site, await invite(site, campaign, users.anna), users.gm);
+    await call(site, "POST", `/api/games/${campaign}/master`, users.anna.cookie, { userId: users.gm.id });
+    assertError(await call(site, "DELETE", `/api/games/${campaign}/members/${users.anna.id}`, users.gm.cookie), "member.protected", "the owner");
+  });
+
+  test("removing a member of another game is 404", async () => {
+    const { site, users } = await siteWith("admin", "gm", "pat", "sam");
+    const { gameId } = await playedGame(site, users.gm, users.pat);
+    const other = await playedGame(site, users.sam, users.pat);
+    assertError(await call(site, "DELETE", `/api/games/${gameId}/members/${users.sam.id}`, users.gm.cookie), "member.notFound");
+    assert.equal((await call(site, "GET", `/api/games/${other.gameId}`, users.sam.cookie)).body.members.length, 2, "nothing changed there");
+  });
+
+  test("a player leaves the game; the master cannot until they hand it over", async () => {
+    const { site, users } = await siteWith("admin", "gm", "pat", "eve");
+    const { gameId, sceneId } = await playedGame(site, users.gm, users.pat);
+    const seen = await call(site, "GET", `/api/games/${gameId}`, users.pat.cookie);
+    assert.deepEqual([seen.body.canLeave, seen.body.canDelete], [true, false]);
+    assertError(await call(site, "POST", `/api/games/${gameId}/leave`, users.eve.cookie), "game.notFound");
+    assertError(await call(site, "POST", `/api/games/${gameId}/leave`, users.gm.cookie), "auth.forbidden");
+
+    assert.equal((await call(site, "POST", `/api/games/${gameId}/leave`, users.pat.cookie)).status, 204);
+    assertError(await call(site, "GET", `/api/games/${gameId}/scenes/${sceneId}`, users.pat.cookie), "game.notFound");
+    assert.deepEqual((await call(site, "GET", "/api/games", users.pat.cookie)).body.games, []);
+
+    await join(site, await invite(site, gameId, users.gm), users.pat);
+    await call(site, "POST", `/api/games/${gameId}/master`, users.gm.cookie, { userId: users.pat.id });
+    assert.equal((await call(site, "POST", `/api/games/${gameId}/leave`, users.gm.cookie)).status, 204, "the creator, no longer master");
+    assert.deepEqual((await call(site, "GET", `/api/games/${gameId}`, users.pat.cookie)).body.members.map((member: any) => member.id), [users.pat.id]);
+  });
+
+  test("the master deletes a game: after handing it over the creator gets 403 and the new master deletes it", async () => {
+    const { site, users } = await siteWith("admin", "gm", "pat", "eve");
+    const { gameId } = await playedGame(site, users.gm, users.pat);
+    assert.equal((await call(site, "GET", `/api/games/${gameId}`, users.gm.cookie)).body.canDelete, true);
+    assertError(await call(site, "DELETE", `/api/games/${gameId}`, users.pat.cookie), "auth.forbidden");
+    await call(site, "POST", `/api/games/${gameId}/master`, users.gm.cookie, { userId: users.pat.id });
+    assertError(await call(site, "DELETE", `/api/games/${gameId}`, users.gm.cookie), "auth.forbidden");
+    assertError(await call(site, "DELETE", `/api/games/${gameId}`, users.eve.cookie), "game.notFound");
+    assert.equal((await call(site, "DELETE", `/api/games/${gameId}`, users.pat.cookie)).status, 204);
+    assertError(await call(site, "GET", `/api/games/${gameId}`, users.gm.cookie), "game.notFound");
+  });
+
+  test("taking mastery back is only for a personal campaign: in a game with a master it is 403", async () => {
+    const { site, users } = await siteWith("admin", "gm", "pat", "eve");
+    const { gameId } = await playedGame(site, users.gm, users.pat);
+    assertError(await call(site, "DELETE", `/api/games/${gameId}/master`, users.gm.cookie), "auth.forbidden");
+    assertError(await call(site, "DELETE", `/api/games/${gameId}/master`, users.pat.cookie), "auth.forbidden");
+    assertError(await call(site, "DELETE", `/api/games/${gameId}/master`, users.eve.cookie), "game.notFound");
+    assert.equal((await call(site, "GET", `/api/games/${gameId}`, users.gm.cookie)).body.gmId, users.gm.id);
   });
 
   test("the master hands the game to a member: the new master edits, the old one gets 403", async () => {
@@ -449,6 +543,31 @@ describe("personal campaign (R24)", () => {
     assertError(await call(site, "POST", `/api/games/${gameId}/scenes`, users.anna.cookie, { name: "Ещё" }), "auth.forbidden");
     assertError(await call(site, "POST", `/api/games/${gameId}/master`, users.anna.cookie, { userId: users.anna.id }), "auth.forbidden");
     assert.deepEqual((await patch(site, gameId, sceneId, users.gm, FLOOR)).body, { version: 1 });
+  });
+
+  test("the owner takes mastery back: the master becomes a player and the owner edits again", async () => {
+    const { site, users } = await siteWith("admin", "anna", "gm", "eve");
+    const gameId = await createGame(site, users.anna, "personal");
+    const sceneId = await createScene(site, gameId, users.anna);
+    await call(site, "PUT", `/api/games/${gameId}/scenes/${sceneId}`, users.anna.cookie, { visible: true });
+    await join(site, await invite(site, gameId, users.anna), users.gm);
+    await call(site, "POST", `/api/games/${gameId}/master`, users.anna.cookie, { userId: users.gm.id });
+
+    assertError(await call(site, "DELETE", `/api/games/${gameId}/master`, users.gm.cookie), "auth.forbidden", "the master");
+    assertError(await call(site, "DELETE", `/api/games/${gameId}/master`, users.eve.cookie), "game.notFound");
+    assertError(await call(site, "POST", `/api/games/${gameId}/leave`, users.anna.cookie), "auth.forbidden", "the owner deletes, not leaves");
+    assertError(await call(site, "POST", `/api/games/${gameId}/leave`, users.gm.cookie), "auth.forbidden", "the master");
+
+    const taken = await call(site, "DELETE", `/api/games/${gameId}/master`, users.anna.cookie);
+    assert.deepEqual([taken.body.gmId, taken.body.editor, taken.body.role], [null, true, "player"]);
+    assert.deepEqual(taken.body.members.map((member: any) => [member.id, member.role]), [
+      [users.anna.id, "player"],
+      [users.gm.id, "player"],
+    ]);
+    assert.deepEqual((await patch(site, gameId, sceneId, users.anna, FLOOR)).body, { version: 1 });
+    assertError(await patch(site, gameId, sceneId, users.gm, FLOOR), "auth.forbidden");
+    assert.equal((await call(site, "DELETE", `/api/games/${gameId}/master`, users.anna.cookie)).status, 200, "again: nothing to take");
+    assert.equal((await call(site, "POST", `/api/games/${gameId}/leave`, users.gm.cookie)).status, 204, "now a player, the former master may leave");
   });
 
   test("only the owner deletes the campaign: not the master, not a player; then it is gone for everyone", async () => {

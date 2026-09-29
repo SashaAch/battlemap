@@ -181,6 +181,40 @@ describe("queries", () => {
     }
   });
 
+  test("an expired game invite outlives the clean-up at start, so it still reads as expired; a used-up one goes", () => {
+    let db = new Database(file);
+    const admin = db.insertUser({
+      login: "admin",
+      displayName: "A",
+      passHash: new Uint8Array(64),
+      passSalt: new Uint8Array(16),
+      passParams: "scrypt:32768:8:1",
+      role: "admin",
+      mustChangePassword: false,
+      createdAt: 0,
+    });
+    const game = db.insertGame("Игра", "gm", admin.id, admin.id, 0);
+    const [expired, usedUp, register] = [1, 2, 3].map((n) => new Uint8Array(32).fill(n));
+    db.insertInvite(expired, "game", game.id, admin.id, 10, 5);
+    db.insertInvite(usedUp, "game", game.id, admin.id, 100, 1);
+    assert.equal(db.useInvite(usedUp, "game", 5), true);
+    db.insertInvite(register, "register", null, admin.id, 10, 5);
+    db.close();
+
+    // A restart: the server opens the database again and cleans up.
+    db = new Database(file);
+    try {
+      db.deleteExpired(50);
+      assert.deepEqual(db.findGameInvite(expired), { gameId: game.id, expiresAt: 10, uses: 0, maxUses: 5 });
+      assert.equal(db.findGameInvite(usedUp), undefined);
+      assert.equal(db.hasInvite(register, "register", 5), false, "an expired registration code goes as before");
+      db.deleteGameInvites(game.id);
+      assert.equal(db.findGameInvite(expired), undefined);
+    } finally {
+      db.close();
+    }
+  });
+
   test("a new password raises the version; a rehash writes only over the hash it replaces", () => {
     const db = new Database(file);
     try {

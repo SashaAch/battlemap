@@ -480,7 +480,8 @@ export class Database {
     ).map((row) => ({ ...toGame(row), role: toRole(row.member_role) }));
   }
 
-  setGameMaster(gameId: number, gmId: number): void {
+  /** Null leaves a personal campaign without a master. */
+  setGameMaster(gameId: number, gmId: number | null): void {
     this.#run("UPDATE games SET gm_id = ? WHERE id = ?", gmId, gameId);
   }
 
@@ -581,9 +582,12 @@ export class Database {
     return Number(row.version);
   }
 
-  /** Drops expired sessions and invites, and invites with no uses left. */
+  /**
+   * Drops expired sessions, invites with no uses left and expired registration codes. An expired game invite
+   * stays, so joining with it keeps answering 410 after a restart; it goes with its game or when a member is removed.
+   */
   deleteExpired(now: number): void {
     this.#run("DELETE FROM sessions WHERE expires_at <= ?", now);
-    this.#run("DELETE FROM invites WHERE expires_at <= ? OR uses >= max_uses", now);
+    this.#run("DELETE FROM invites WHERE uses >= max_uses OR (expires_at <= ? AND kind = 'register')", now);
   }
 }
