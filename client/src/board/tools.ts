@@ -6,14 +6,13 @@ import {
   brushSquare,
   cellAt,
   cellsOfSquare,
-  edgesBetween,
   isCellInRange,
   nearestEdge,
   outlineCells,
   panBy,
   pointsAlong,
   screenToWorld,
-  snapToVertex,
+  strokeEdges,
   wheelGesture,
   zoomAt,
 } from "./geometry.ts";
@@ -78,11 +77,8 @@ interface Stroke {
   /** The tool the stroke started with; switching tools during a stroke does not change it. */
   tool: Tool;
   last: Point;
-  /** Fill and room: the outline drawn so far. */
-  outline: Point[];
-  /** Walls: the vertex the stroke has reached and whether it has left the first one. */
-  vertex: Point;
-  moved: boolean;
+  /** Fill, room and walls: the points drawn so far. */
+  points: Point[];
 }
 
 interface Pinch {
@@ -123,7 +119,7 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
   const startStroke = (pointerId: number, world: Point): void => {
     if (stroke) return;
     beginChange(board.history);
-    stroke = { pointerId, tool: board.tool, last: world, outline: [world], vertex: snapToVertex(world), moved: false };
+    stroke = { pointerId, tool: board.tool, last: world, points: [world] };
     if (stroke.tool === "brush" || stroke.tool === "eraser") dab(stroke.tool, world);
     else hooks.redraw();
   };
@@ -131,36 +127,31 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
   const continueStroke = (world: Point): void => {
     if (!stroke) return;
     const { tool } = stroke;
-    if (tool === "fill" || tool === "room") {
-      stroke.outline.push(world);
+    if (tool === "brush" || tool === "eraser") {
+      for (const point of pointsAlong(stroke.last, world, STROKE_STEP)) dab(tool, point);
     } else {
-      for (const point of pointsAlong(stroke.last, world, STROKE_STEP)) {
-        if (tool === "brush" || tool === "eraser") {
-          dab(tool, point);
-          continue;
-        }
-        const vertex = snapToVertex(point);
-        if (vertex.x === stroke.vertex.x && vertex.y === stroke.vertex.y) continue;
-        apply(edgesPatch(board.scene, edgesBetween(stroke.vertex, vertex), board.edgeType));
-        stroke.vertex = vertex;
-        stroke.moved = true;
-      }
+      stroke.points.push(world);
+    }
+    // Walls show up as they are drawn; a click is decided on release.
+    if (tool === "walls") {
+      const { edges, click } = strokeEdges(stroke.points);
+      if (!click) apply(edgesPatch(board.scene, edges, board.edgeType));
     }
     stroke.last = world;
   };
 
   const finishStroke = (): void => {
     if (!stroke) return;
-    const { tool, outline, last, moved } = stroke;
+    const { tool, points } = stroke;
     stroke = null;
-    if (tool === "fill") apply(fillPatch(board.scene, outlineCells(outline), board.terrain));
-    else if (tool === "room") apply(roomPatch(board.scene, outlineCells(outline), board.terrain));
-    else if (tool === "walls" && !moved) apply(edgesPatch(board.scene, [nearestEdge(last)], board.edgeType));
+    if (tool === "fill") apply(fillPatch(board.scene, outlineCells(points), board.terrain));
+    else if (tool === "room") apply(roomPatch(board.scene, outlineCells(points), board.terrain));
+    else if (tool === "walls") apply(edgesPatch(board.scene, strokeEdges(points).edges, board.edgeType));
     if (finishChange(board.history)) hooks.committed();
     else hooks.redraw();
   };
 
-  // A second finger turns a stroke into a pinch: what the first finger drew is taken back.
+  // A second finger turns a stroke into a pinch, and a cancelled pointer ends it: what was drawn is taken back.
   const cancelStroke = (): void => {
     if (!stroke) return;
     cancelChange(board.scene, board.history);
@@ -243,7 +234,8 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
     if (e.button === 1) e.preventDefault();
   });
 
-  const release = (e: PointerEvent): void => {
+  // Release ends a stroke as a change; a cancelled pointer (the browser took it away) takes the stroke back.
+  const release = (e: PointerEvent, cancelled: boolean): void => {
     if (e.pointerType === "touch") {
       touches.delete(e.pointerId);
       if (touches.size < 2) pinch = null;
@@ -252,10 +244,13 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
       panPointer = null;
       updateCursor();
     }
-    if (stroke && stroke.pointerId === e.pointerId) finishStroke();
+    if (stroke && stroke.pointerId === e.pointerId) {
+      if (cancelled) cancelStroke();
+      else finishStroke();
+    }
   };
-  canvas.addEventListener("pointerup", release);
-  canvas.addEventListener("pointercancel", release);
+  canvas.addEventListener("pointerup", (e) => release(e, false));
+  canvas.addEventListener("pointercancel", (e) => release(e, true));
 
   canvas.addEventListener("pointerleave", () => {
     board.hover = null;
@@ -329,7 +324,7 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
 
   return {
     cursor(): BoardCursor | null {
-      if (stroke && (stroke.tool === "fill" || stroke.tool === "room")) return { kind: "outline", points: stroke.outline };
+      if (stroke && (stroke.tool === "fill" || stroke.tool === "room")) return { kind: "outline", points: stroke.points };
       if (!board.hover || stroke?.tool === "walls") return null;
       if (board.tool === "brush" || board.tool === "eraser") return { kind: "square", square: brushSquare(board.hover, board.brushSize) };
       if (board.tool === "walls") return { kind: "edge", key: nearestEdge(board.hover) };

@@ -24,6 +24,7 @@ import {
   pointsAlong,
   screenToWorld,
   snapToVertex,
+  strokeEdges,
   wheelGesture,
   worldToScreen,
   zoomAt,
@@ -300,20 +301,6 @@ describe("outline", () => {
   });
 });
 
-/** Edges laid by a stroke through `points`, the way the walls tool lays them. */
-function strokeEdges(points: readonly Point[]): string[] {
-  let vertex = snapToVertex(points[0]);
-  const edges: string[] = [];
-  for (let i = 1; i < points.length; i++) {
-    for (const point of pointsAlong(points[i - 1], points[i], 0.25)) {
-      const next = snapToVertex(point);
-      edges.push(...edgesBetween(vertex, next));
-      vertex = next;
-    }
-  }
-  return edges;
-}
-
 describe("walls along the grid", () => {
   test("a run along a grid line, in both directions", () => {
     assert.deepEqual(edgesBetween({ x: 0, y: 0 }, { x: 3, y: 0 }), ["h:0,0", "h:1,0", "h:2,0"]);
@@ -328,11 +315,35 @@ describe("walls along the grid", () => {
   });
 
   test("a hand stroke along the diagonal through 3 vertices gives a staircase of 6 edges", () => {
-    const edges = new Set(strokeEdges([{ x: 0.1, y: 0.05 }, { x: 2.9, y: 3.05 }]));
-    assert.equal(edges.size, 6);
-    const parsed = [...edges].map((key) => parseEdgeKey(key));
-    assert.equal(parsed.filter((e) => e.dir === "h").length, 3);
-    assert.equal(parsed.filter((e) => e.dir === "v").length, 3);
+    // Vertices 0,0 → 1,0 → 1,1 → 2,1 → 2,2 → 2,3 → 3,3: the stroke is a little steeper than 45°,
+    // so near the end it drops below vertex 3,2 and the last step goes down before right.
+    assert.deepEqual(strokeEdges([{ x: 0.1, y: 0.05 }, { x: 2.9, y: 3.05 }]), {
+      edges: ["h:0,0", "v:1,0", "h:1,1", "v:2,1", "v:2,2", "h:2,3"],
+      click: false,
+    });
+    // Exactly along the diagonal every jump is corner to corner, and each makes the step along x first.
+    assert.deepEqual(strokeEdges([{ x: 0.1, y: 0.1 }, { x: 2.9, y: 2.9 }]), {
+      edges: ["h:0,0", "v:1,0", "h:1,1", "v:2,1", "h:2,2", "v:3,2"],
+      click: false,
+    });
+  });
+
+  test("a hand stroke along a grid line lays the edges it passes", () => {
+    assert.deepEqual(strokeEdges([{ x: -0.2, y: 2.1 }, { x: 1.4, y: 1.9 }, { x: 3.3, y: 2.2 }]), {
+      edges: ["h:0,2", "h:1,2", "h:2,2"],
+      click: false,
+    });
+  });
+
+  test("a stroke that does not leave its first vertex is a click on the nearest edge", () => {
+    assert.deepEqual(strokeEdges([{ x: 2.8, y: 3.1 }]), { edges: ["h:2,3"], click: true });
+    // A wobble around vertex 3,3; the edge is the one nearest to where the pointer was let go.
+    assert.deepEqual(strokeEdges([{ x: 2.8, y: 3.1 }, { x: 3.2, y: 2.7 }, { x: 2.7, y: 3.2 }]), { edges: ["h:2,3"], click: true });
+    assert.deepEqual(strokeEdges([{ x: 2.8, y: 3.1 }, { x: 2.9, y: 3.3 }]), { edges: ["v:3,3"], click: true });
+  });
+
+  test("an empty stroke lays nothing", () => {
+    assert.deepEqual(strokeEdges([]), { edges: [], click: false });
   });
 
   test("a shallow slope makes long treads", () => {

@@ -282,6 +282,30 @@ export function edgesBetween(from: Point, to: Point): string[] {
   return edges;
 }
 
+/** Distance between the samples of a walls stroke, in cells: fine enough not to skip a vertex. */
+const STROKE_SAMPLE = 0.25;
+
+/**
+ * The edges a walls stroke lays through world points `points`, in drawing order. The stroke is sampled,
+ * every sample snaps to the nearest vertex and each next vertex is joined to the last by `edgesBetween`.
+ * A stroke that never leaves its first vertex is a click: the nearest edge to the last point.
+ */
+export function strokeEdges(points: readonly Point[]): { edges: string[]; click: boolean } {
+  if (points.length === 0) return { edges: [], click: false };
+  let vertex = snapToVertex(points[0]);
+  const edges: string[] = [];
+  for (let i = 1; i < points.length; i++) {
+    for (const point of pointsAlong(points[i - 1], points[i], STROKE_SAMPLE)) {
+      const next = snapToVertex(point);
+      if (next.x === vertex.x && next.y === vertex.y) continue;
+      edges.push(...edgesBetween(vertex, next));
+      vertex = next;
+    }
+  }
+  if (edges.length > 0) return { edges, click: false };
+  return { edges: [nearestEdge(points[points.length - 1])], click: true };
+}
+
 /** The edge nearest to a world point: the closest of the four sides of the cell under it. */
 export function nearestEdge(world: Point): string {
   const { x, y } = cellAt(world);
