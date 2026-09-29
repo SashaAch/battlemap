@@ -34,8 +34,8 @@ function inspect(): { version: number; schema: unknown[] } {
 }
 
 const TABLE_COLUMNS = {
-  users: ["id", "login", "display_name", "pass_hash", "pass_salt", "pass_params", "role", "must_change_password", "disabled", "settings_json", "created_at"],
-  sessions: ["token_hash", "user_id", "expires_at"],
+  users: ["id", "login", "display_name", "pass_hash", "pass_salt", "pass_params", "pass_version", "role", "must_change_password", "disabled", "settings_json", "created_at"],
+  sessions: ["token_hash", "user_id", "pass_version", "expires_at"],
   invites: ["code_hash", "kind", "game_id", "created_by", "expires_at", "max_uses", "uses"],
 };
 
@@ -137,6 +137,36 @@ describe("queries", () => {
     }
   });
 
+  test("a new password raises the version; a rehash writes only over the hash it replaces", () => {
+    const db = new Database(file);
+    try {
+      const user = db.insertUser({
+        login: "anna",
+        displayName: "A",
+        passHash: new Uint8Array(64).fill(1),
+        passSalt: new Uint8Array(16),
+        passParams: "scrypt:16384:8:1",
+        role: "user",
+        mustChangePassword: false,
+        createdAt: 0,
+      });
+      assert.equal(user.passVersion, 1);
+      const newer = { passHash: new Uint8Array(64).fill(2), passSalt: new Uint8Array(16), passParams: "scrypt:32768:8:1" };
+      db.setPassword(user.id, newer, true);
+      assert.equal(db.findUserById(user.id)?.passVersion, 2);
+
+      const rehash = { passHash: new Uint8Array(64).fill(3), passSalt: new Uint8Array(16), passParams: "scrypt:32768:8:1" };
+      db.rehashPassword(user.id, user.passHash, rehash);
+      assert.deepEqual(db.findUserById(user.id)?.passHash, newer.passHash, "the reset in between is kept");
+      db.rehashPassword(user.id, newer.passHash, rehash);
+      const after = db.findUserById(user.id);
+      assert.deepEqual(after?.passHash, rehash.passHash);
+      assert.equal(after?.passVersion, 2, "a rehash keeps the version");
+    } finally {
+      db.close();
+    }
+  });
+
   test("deleting a user's sessions can keep the current one", () => {
     const db = new Database(file);
     try {
@@ -151,13 +181,13 @@ describe("queries", () => {
         createdAt: 0,
       });
       const [a, b, c] = [1, 2, 3].map((n) => new Uint8Array(32).fill(n));
-      for (const hash of [a, b, c]) db.insertSession(hash, user.id, 100);
+      for (const hash of [a, b, c]) db.insertSession(hash, user.id, 1, 100);
       db.deleteUserSessions(user.id, b);
       assert.equal(db.findSession(a), undefined);
-      assert.deepEqual(db.findSession(b), { userId: user.id, expiresAt: 100 });
+      assert.deepEqual(db.findSession(b), { userId: user.id, passVersion: 1, expiresAt: 100 });
       db.deleteUserSessions(user.id);
       assert.equal(db.findSession(b), undefined);
-      db.insertSession(c, user.id, 100);
+      db.insertSession(c, user.id, 1, 100);
       db.deleteExpired(100);
       assert.equal(db.findSession(c), undefined);
     } finally {

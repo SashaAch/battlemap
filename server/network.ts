@@ -1,6 +1,7 @@
 // The addresses of this computer: links printed at start-up (R39) and the Host names requests may carry,
 // which stops DNS rebinding (a foreign name that resolves to this computer).
 
+import { isIPv6 } from "node:net";
 import { networkInterfaces } from "node:os";
 
 /** How often the interface list may be read again when an unknown Host comes (addresses change with the network). */
@@ -41,14 +42,19 @@ export function hostName(header: string | undefined): string | null {
   return name.replace(/\.$/, "") || null;
 }
 
-/** Host names requests may use: localhost, this computer's addresses and `allowedHosts` from settings.json. */
+/**
+ * Host names requests may use: localhost, this computer's addresses and `allowedHosts` from settings.json.
+ * The entries are read like a Host header (case, a final dot, IPv6 brackets; a port is ignored).
+ */
 export class HostCheck {
   readonly #fixed: Set<string>;
   #addresses = new Set<string>();
   #readAt = -Infinity;
 
   constructor(allowedHosts: readonly string[]) {
-    this.#fixed = new Set([...LOCAL_HOSTS, ...allowedHosts]);
+    // A bare IPv6 address has no port; brackets keep hostName from reading its last group as one.
+    const named = allowedHosts.map((host) => hostName(isIPv6(host.trim()) ? `[${host.trim()}]` : host)).filter((name) => name !== null);
+    this.#fixed = new Set([...LOCAL_HOSTS, ...named]);
   }
 
   allows(name: string | null): boolean {

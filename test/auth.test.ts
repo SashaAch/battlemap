@@ -25,7 +25,9 @@ import {
   SESSION_LIFETIME_MS,
 } from "../server/auth.ts";
 import { Database } from "../server/db.ts";
-import { addressKey } from "../server/limits.ts";
+import { addressKey, AttemptLimiter } from "../server/limits.ts";
+import { scryptHasher } from "../server/passwords.ts";
+import type { PasswordHasher } from "../server/passwords.ts";
 import { siteLinks } from "../server/network.ts";
 import { ApiError, ERRORS } from "../server/errors.ts";
 import type { ErrorCode } from "../server/errors.ts";
@@ -309,7 +311,7 @@ describe("registration, sign-in, api/me", () => {
 });
 
 /** Accounts on a database of their own with a clock the test moves; the first administrator exists. */
-async function directAccounts(): Promise<{ db: Database; accounts: Accounts; clock: { now: number } }> {
+async function directAccounts(hasher: PasswordHasher = scryptHasher): Promise<{ db: Database; accounts: Accounts; clock: { now: number } }> {
   const dir = mkdtempSync(path.join(tmpdir(), "bm-auth-"));
   const db = new Database(path.join(dir, "battlemap.db"));
   cleanups.push(async () => {
@@ -317,9 +319,38 @@ async function directAccounts(): Promise<{ db: Database; accounts: Accounts; clo
     rmSync(dir, { recursive: true, force: true });
   });
   const clock = { now: Date.UTC(2026, 0, 1) };
-  const accounts = new Accounts(db, () => clock.now);
+  const accounts = new Accounts(db, () => clock.now, hasher);
   await accounts.register({ ...ADMIN, setup: accounts.startSetup() ?? "" }, false, "127.0.0.1");
   return { db, accounts, clock };
+}
+
+/**
+ * The real hasher, except that the next password check, once computed, waits for the test:
+ * whatever the test does meanwhile happens between the check and what follows it.
+ */
+function pausingHasher() {
+  let pending: { reached: () => void; go: Promise<void> } | null = null;
+  const hasher: PasswordHasher = {
+    hash: scryptHasher.hash,
+    async matches(password, stored) {
+      const result = await scryptHasher.matches(password, stored);
+      const pause = pending;
+      pending = null;
+      if (pause) {
+        pause.reached();
+        await pause.go;
+      }
+      return result;
+    },
+  };
+  const pauseNext = () => {
+    let reached = (): void => undefined;
+    let go = (): void => undefined;
+    const reachedPromise = new Promise<void>((resolve) => (reached = resolve));
+    pending = { reached, go: new Promise<void>((resolve) => (go = resolve)) };
+    return { reached: reachedPromise, go };
+  };
+  return { hasher, pauseNext };
 }
 
 /** "ok", or the error code the promise failed with. */
@@ -422,6 +453,73 @@ describe("password guessing (R39)", () => {
   });
 });
 
+describe("a password changing while it is checked", () => {
+  async function anna() {
+    const { hasher, pauseNext } = pausingHasher();
+    const { db, accounts } = await directAccounts(hasher);
+    const { user } = await accounts.register({ login: "anna", displayName: "Anna", password: "anna-password" }, true, "10.0.0.9");
+    const own = accounts.authenticate((await accounts.login("anna", "anna-password", "10.0.0.2")).token);
+    assert.ok(own);
+    const admin = db.findUserByLogin("admin");
+    assert.ok(admin);
+    return { db, accounts, pauseNext, user, own, admin };
+  }
+
+  test("a sign-in checked before a password change makes no session", async () => {
+    const { accounts, pauseNext, own } = await anna();
+    const pause = pauseNext();
+    const racing = outcome(accounts.login("anna", "anna-password", "10.0.0.3"));
+    await pause.reached;
+    await accounts.changePassword(own, "anna-password", "anna-new-password", "10.0.0.2");
+    pause.go();
+    assert.equal(await racing, "auth.invalid");
+    assert.ok(accounts.authenticate(own.token), "the session that changed the password stays");
+  });
+
+  test("a sign-in checked before a reset by the administrator makes no session", async () => {
+    const { accounts, pauseNext, user, admin } = await anna();
+    const pause = pauseNext();
+    const racing = outcome(accounts.login("anna", "anna-password", "10.0.0.3"));
+    await pause.reached;
+    await accounts.resetPassword(admin, user.id);
+    pause.go();
+    assert.equal(await racing, "auth.invalid");
+  });
+
+  test("a sign-in checked before the account is disabled makes no session", async () => {
+    const { accounts, pauseNext, user, admin } = await anna();
+    const pause = pauseNext();
+    const racing = outcome(accounts.login("anna", "anna-password", "10.0.0.3"));
+    await pause.reached;
+    accounts.setDisabled(admin, user.id, true);
+    pause.go();
+    assert.equal(await racing, "auth.invalid");
+  });
+
+  test("a password change checked before a reset by the administrator is refused", async () => {
+    const { accounts, pauseNext, user, own, admin } = await anna();
+    const second = accounts.authenticate((await accounts.login("anna", "anna-password", "10.0.0.4")).token);
+    assert.ok(second);
+    const pause = pauseNext();
+    const racing = outcome(accounts.changePassword(second, "anna-password", "anna-new-password", "10.0.0.4"));
+    await pause.reached;
+    const reset = await accounts.resetPassword(admin, user.id);
+    pause.go();
+    assert.equal(await racing, "password.wrong");
+    assert.equal(accounts.authenticate(own.token), null);
+    assert.equal(await outcome(accounts.login("anna", reset.password, "10.0.0.5")), "ok", "the reset password is the one that works");
+  });
+
+  test("a session made under an older password version is not valid", async () => {
+    const { db, accounts, user, own } = await anna();
+    const current = db.findUserById(user.id);
+    assert.ok(current);
+    // A new password written without going through Accounts, as if another request did it right after the check.
+    db.setPassword(user.id, current, false);
+    assert.equal(accounts.authenticate(own.token), null);
+  });
+});
+
 describe("registration limits and codes (R38, R39)", () => {
   test("registration by code or open registration: the 11th attempt in 15 minutes from one address gets 429", async () => {
     const { site, admin } = await siteWithAdmin();
@@ -501,6 +599,18 @@ describe("roles (R38)", () => {
   });
 });
 
+describe("the attempt limiter", () => {
+  test("it keeps at most maxKeys keys, a new key beyond that is refused, and it sweeps at most every 10 seconds", () => {
+    const limiter = new AttemptLimiter(2, 1000, 3);
+    for (const key of ["a", "b", "c"]) assert.equal(limiter.take(key, 0), true, key);
+    assert.equal(limiter.take("d", 0), false, "the table is full: a new key counts as used up");
+    assert.equal(limiter.take("a", 0), true, "known keys still count normally");
+    assert.equal(limiter.take("a", 0), false);
+    assert.equal(limiter.take("d", 9_999), false, "expired keys are not swept before 10 seconds");
+    assert.equal(limiter.take("d", 10_000), true, "after the sweep there is room again");
+  });
+});
+
 describe("Host names (DNS rebinding)", () => {
   test("a request with a foreign Host is refused, even with a matching Origin", async () => {
     const { site } = await siteWithAdmin();
@@ -535,6 +645,15 @@ describe("Host names (DNS rebinding)", () => {
       [body],
     );
     assert.equal(signIn.status, 401, "the Origin is compared with the allowed Host");
+  });
+
+  test("allowedHosts are read like a Host header: case, a final dot, a port, IPv6 brackets", async () => {
+    const site = await newSite({ allowedHosts: ["Game.Example.org.:8080", "2001:DB8::7", "[2001:db8::8]:9000"] });
+    const accepted = ["game.example.org:8080", "GAME.EXAMPLE.ORG", "game.example.org.:1234", "[2001:db8::7]:8080", "[2001:db8::8]"];
+    for (const host of accepted) assert.equal((await rawRequest(site, "GET", "/api/me", { Host: host })).status, 401, host);
+    for (const host of ["example.org", "game.example.org.evil", "[2001:db8::]"]) {
+      assert.equal((await rawRequest(site, "GET", "/api/me", { Host: host })).status, 403, host);
+    }
   });
 
   test("the start-up links name localhost and the network addresses of this computer", () => {

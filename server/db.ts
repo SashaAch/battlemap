@@ -4,7 +4,11 @@
 import { DatabaseSync } from "node:sqlite";
 import type { SQLInputValue, SQLOutputValue, StatementSync } from "node:sqlite";
 
-/** Migration N (1-based) brings the schema from version N-1 to N. Never edit a published one: add the next. */
+/**
+ * Migration N (1-based) brings the schema from version N-1 to N. Once a release with a migration is installed
+ * anywhere, that migration is never edited again: a schema change becomes the next migration. Migration 1 was
+ * still changed in place during stage 4, because no database existed yet.
+ */
 export const MIGRATIONS: readonly string[] = [
   `
   CREATE TABLE users (
@@ -14,6 +18,7 @@ export const MIGRATIONS: readonly string[] = [
     pass_hash BLOB NOT NULL,
     pass_salt BLOB NOT NULL,
     pass_params TEXT NOT NULL,
+    pass_version INTEGER NOT NULL DEFAULT 1,
     role TEXT NOT NULL CHECK (role IN ('admin', 'user')),
     must_change_password INTEGER NOT NULL DEFAULT 0 CHECK (must_change_password IN (0, 1)),
     disabled INTEGER NOT NULL DEFAULT 0 CHECK (disabled IN (0, 1)),
@@ -24,6 +29,7 @@ export const MIGRATIONS: readonly string[] = [
   CREATE TABLE sessions (
     token_hash BLOB PRIMARY KEY,
     user_id INTEGER NOT NULL REFERENCES users (id),
+    pass_version INTEGER NOT NULL,
     expires_at INTEGER NOT NULL
   ) STRICT;
   CREATE INDEX sessions_by_user ON sessions (user_id);
@@ -70,6 +76,8 @@ export interface User {
   passSalt: Uint8Array;
   /** How pass_hash was made, e.g. `scrypt:32768:8:1` (auth.ts), so the cost can be raised later. */
   passParams: string;
+  /** Goes up with every new password (change or reset); a session made under another version is not valid. */
+  passVersion: number;
   role: Role;
   mustChangePassword: boolean;
   disabled: boolean;
@@ -96,6 +104,8 @@ export interface NewUser extends StoredPassword {
 
 export interface Session {
   userId: number;
+  /** The user's password version when the session was made. */
+  passVersion: number;
   expiresAt: number;
 }
 
@@ -109,6 +119,7 @@ function toUser(row: Row): User {
     passHash: row.pass_hash as Uint8Array,
     passSalt: row.pass_salt as Uint8Array,
     passParams: String(row.pass_params),
+    passVersion: Number(row.pass_version),
     role: row.role === "admin" ? "admin" : "user",
     mustChangePassword: row.must_change_password === 1,
     disabled: row.disabled === 1,
@@ -209,14 +220,31 @@ export class Database {
     return toUser(row);
   }
 
+  /** A new password: the password version goes up, so sessions made under the old one stop being valid. */
   setPassword(id: number, password: StoredPassword, mustChangePassword: boolean): void {
     this.#run(
-      "UPDATE users SET pass_hash = ?, pass_salt = ?, pass_params = ?, must_change_password = ? WHERE id = ?",
+      `UPDATE users SET pass_hash = ?, pass_salt = ?, pass_params = ?, must_change_password = ?, pass_version = pass_version + 1
+       WHERE id = ?`,
       password.passHash,
       password.passSalt,
       password.passParams,
       flag(mustChangePassword),
       id,
+    );
+  }
+
+  /**
+   * The same password hashed with the current parameters; the version stays. Only if the hash is still `oldHash`,
+   * so a change or reset that came in between is not overwritten.
+   */
+  rehashPassword(id: number, oldHash: Uint8Array, password: StoredPassword): void {
+    this.#run(
+      "UPDATE users SET pass_hash = ?, pass_salt = ?, pass_params = ? WHERE id = ? AND pass_hash = ?",
+      password.passHash,
+      password.passSalt,
+      password.passParams,
+      id,
+      oldHash,
     );
   }
 
@@ -234,13 +262,24 @@ export class Database {
 
   // ---- sessions: only the SHA-256 of the token is stored ----
 
-  insertSession(tokenHash: Uint8Array, userId: number, expiresAt: number): void {
-    this.#run("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)", tokenHash, userId, expiresAt);
+  insertSession(tokenHash: Uint8Array, userId: number, passVersion: number, expiresAt: number): void {
+    this.#run(
+      "INSERT INTO sessions (token_hash, user_id, pass_version, expires_at) VALUES (?, ?, ?, ?)",
+      tokenHash,
+      userId,
+      passVersion,
+      expiresAt,
+    );
+  }
+
+  /** Moves the session doing a password change to the new password version. */
+  setSessionPassVersion(tokenHash: Uint8Array, passVersion: number): void {
+    this.#run("UPDATE sessions SET pass_version = ? WHERE token_hash = ?", passVersion, tokenHash);
   }
 
   findSession(tokenHash: Uint8Array): Session | undefined {
-    const row = this.#get("SELECT user_id, expires_at FROM sessions WHERE token_hash = ?", tokenHash);
-    return row && { userId: Number(row.user_id), expiresAt: Number(row.expires_at) };
+    const row = this.#get("SELECT user_id, pass_version, expires_at FROM sessions WHERE token_hash = ?", tokenHash);
+    return row && { userId: Number(row.user_id), passVersion: Number(row.pass_version), expiresAt: Number(row.expires_at) };
   }
 
   setSessionExpiry(tokenHash: Uint8Array, expiresAt: number): void {

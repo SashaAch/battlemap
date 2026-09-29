@@ -10,7 +10,8 @@ import type { THEME_CHOICES } from "../client/src/theme.ts";
 import type { Database, Role, User } from "./db.ts";
 import { ApiError } from "./errors.ts";
 import { addressKey, AttemptLimiter } from "./limits.ts";
-import { decoyPassword, hashPassword, isCurrent, passwordMatches } from "./passwords.ts";
+import { decoyPassword, isCurrent, scryptHasher } from "./passwords.ts";
+import type { PasswordHasher } from "./passwords.ts";
 
 const MINUTE_MS = 60 * 1000;
 export const DAY_MS = 24 * 60 * MINUTE_MS;
@@ -163,13 +164,15 @@ export class Accounts {
   readonly #failuresByLoginAndAddress = new AttemptLimiter(MAX_FAILURES_PER_LOGIN_AND_ADDRESS, LIMIT_WINDOW_MS);
   readonly #failuresByLogin = new AttemptLimiter(MAX_FAILURES_PER_LOGIN, LIMIT_WINDOW_MS);
   readonly #registrations = new AttemptLimiter(MAX_REGISTRATIONS_PER_ADDRESS, LIMIT_WINDOW_MS);
+  readonly #hasher: PasswordHasher;
   readonly #decoy = decoyPassword();
   /** SHA-256 of the one-time setup token; the token itself is only printed. */
   #setupHash: Buffer | null = null;
 
-  constructor(db: Database, now: () => number) {
+  constructor(db: Database, now: () => number, hasher: PasswordHasher = scryptHasher) {
     this.#db = db;
     this.#now = now;
+    this.#hasher = hasher;
   }
 
   /**
@@ -218,7 +221,7 @@ export class Accounts {
     if (!allowed()) throw new ApiError(refusal);
     if (this.#db.findUserByLogin(login)) throw new ApiError("login.taken");
 
-    const stored = await hashPassword(password);
+    const stored = await this.#hasher.hash(password);
 
     // Checked again in one transaction: other requests ran while the password was hashed.
     const user = this.#db.transaction(() => {
@@ -238,11 +241,34 @@ export class Accounts {
     return { user, token: this.#newSession(user, now) };
   }
 
-  /** The same `auth.invalid` for an unknown login and a wrong password. */
+  /**
+   * The same `auth.invalid` for an unknown login and a wrong password. The session is made only if the password
+   * and the account did not change while the password was checked (otherwise also `auth.invalid`).
+   */
   async login(login: string, password: string, address: string): Promise<SignedIn> {
-    const user = await this.#checkPassword(login, password, address, "auth.invalid");
-    if (user.disabled) throw new ApiError("auth.disabled");
-    return { user, token: this.#newSession(user, this.#now()) };
+    const checked = await this.#checkPassword(login, password, address, "auth.invalid");
+    if (checked.disabled) throw new ApiError("auth.disabled");
+    const signedIn = this.#db.transaction(() => {
+      const user = this.#unchanged(checked, "auth.invalid");
+      return { user, token: this.#newSession(user, this.#now()) };
+    });
+    if (!isCurrent(checked)) this.#db.rehashPassword(checked.id, checked.passHash, await this.#hasher.hash(password));
+    return signedIn;
+  }
+
+  /**
+   * The user as `checked` before the slow password check, read again: a change or reset of the password,
+   * disabling or a reset flag that came in between makes the check void and throws `failure`.
+   */
+  #unchanged(checked: User, failure: "auth.invalid" | "password.wrong"): User {
+    const user = this.#db.findUserById(checked.id);
+    const same =
+      user !== undefined &&
+      user.passVersion === checked.passVersion &&
+      user.disabled === checked.disabled &&
+      user.mustChangePassword === checked.mustChangePassword;
+    if (!same) throw new ApiError(failure);
+    return user;
   }
 
   /**
@@ -266,16 +292,15 @@ export class Accounts {
     }
 
     const user = wellFormed ? this.#db.findUserByLogin(login) : undefined;
-    const matches = await passwordMatches(password, user ?? this.#decoy);
+    const matches = await this.#hasher.matches(password, user ?? this.#decoy);
     if (!user || !matches) throw new ApiError(failure);
     for (const [limiter, key] of booked) limiter.giveBack(key, now);
-    if (!isCurrent(user)) this.#db.setPassword(user.id, await hashPassword(password), user.mustChangePassword);
     return user;
   }
 
   #newSession(user: User, now: number): string {
     const token = randomBytes(TOKEN_BYTES).toString("base64url");
-    this.#db.insertSession(sha256(token), user.id, now + SESSION_LIFETIME_MS);
+    this.#db.insertSession(sha256(token), user.id, user.passVersion, now + SESSION_LIFETIME_MS);
     return token;
   }
 
@@ -287,7 +312,8 @@ export class Accounts {
     if (!session) return null;
     const now = this.#now();
     const user = this.#db.findUserById(session.userId);
-    if (session.expiresAt <= now || !user || user.disabled) {
+    // A session made under an older password (changed or reset since) is not valid.
+    if (session.expiresAt <= now || !user || user.disabled || session.passVersion !== user.passVersion) {
       this.#db.deleteSession(tokenHash);
       return null;
     }
@@ -304,13 +330,17 @@ export class Accounts {
   async changePassword(auth: Authenticated, current: string, next: string, address: string): Promise<User> {
     checkPassword(next);
     if (current === next) throw new ApiError("password.same");
-    const user = await this.#checkPassword(auth.user.login, current, address, "password.wrong");
-    const stored = await hashPassword(next);
-    this.#db.transaction(() => {
-      this.#db.setPassword(user.id, stored, false);
+    const checked = await this.#checkPassword(auth.user.login, current, address, "password.wrong");
+    const stored = await this.#hasher.hash(next);
+    return this.#db.transaction(() => {
+      this.#unchanged(checked, "password.wrong");
+      this.#db.setPassword(checked.id, stored, false);
+      const user = this.#existing(checked.id);
+      // This session stays, under the new password version; all others end.
+      this.#db.setSessionPassVersion(auth.tokenHash, user.passVersion);
       this.#db.deleteUserSessions(user.id, auth.tokenHash);
+      return user;
     });
-    return this.#existing(user.id);
   }
 
   saveSettings(user: User, change: AccountSettings): AccountSettings {
@@ -331,7 +361,7 @@ export class Accounts {
     const displayName = checkDisplayName(displayNameInput);
     if (this.#db.findUserByLogin(login)) throw new ApiError("login.taken");
     const password = readableText(TEMPORARY_PASSWORD_LENGTH);
-    const stored = await hashPassword(password);
+    const stored = await this.#hasher.hash(password);
     const user = this.#db.transaction(() => {
       if (this.#db.findUserByLogin(login)) throw new ApiError("login.taken");
       return this.#db.insertUser({ login, displayName, ...stored, role, mustChangePassword: true, createdAt: this.#now() });
@@ -339,11 +369,11 @@ export class Accounts {
     return { user, password };
   }
 
-  /** Gives the user a temporary password that must be changed, and ends all of their sessions. */
+  /** Gives the user a temporary password that must be changed (a new password version), and ends all of their sessions. */
   async resetPassword(admin: User, id: number): Promise<{ user: User; password: string }> {
     this.#other(admin, id);
     const password = readableText(TEMPORARY_PASSWORD_LENGTH);
-    const stored = await hashPassword(password);
+    const stored = await this.#hasher.hash(password);
     this.#db.transaction(() => {
       this.#existing(id);
       this.#db.setPassword(id, stored, true);

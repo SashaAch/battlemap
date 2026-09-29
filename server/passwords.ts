@@ -36,15 +36,23 @@ function derive(password: string, salt: Uint8Array, { N, r, p }: ScryptParams): 
   });
 }
 
-export async function hashPassword(password: string): Promise<StoredPassword> {
+async function hashPassword(password: string): Promise<StoredPassword> {
   const passSalt = randomBytes(SALT_BYTES);
   return { passHash: await derive(password, passSalt, CURRENT), passSalt, passParams: formatParams(CURRENT) };
 }
 
-export async function passwordMatches(password: string, stored: StoredPassword): Promise<boolean> {
+async function passwordMatches(password: string, stored: StoredPassword): Promise<boolean> {
   const actual = await derive(password, stored.passSalt, parseParams(stored.passParams));
   return actual.length === stored.passHash.length && timingSafeEqual(actual, stored.passHash);
 }
+
+/** Makes and checks password hashes; tests put a slower one in to catch races around the check. */
+export interface PasswordHasher {
+  hash(password: string): Promise<StoredPassword>;
+  matches(password: string, stored: StoredPassword): Promise<boolean>;
+}
+
+export const scryptHasher: PasswordHasher = { hash: hashPassword, matches: passwordMatches };
 
 /** False for a hash made with older parameters. */
 export function isCurrent(stored: StoredPassword): boolean {

@@ -96,5 +96,5 @@ function check(raw: Record<string, unknown>, file: string): Settings {
   if (!Array.isArray(allowedHosts) || !allowedHosts.every((host) => typeof host === "string" && host.trim() !== "")) {
     throw new Error(`${file}: "allowedHosts" must be a list of host names`);
   }
-  return { port, openRegistration, allowedHosts: allowedHosts.map((host: string) => host.trim().toLowerCase()) };
+  return { port, openRegistration, allowedHosts: [...allowedHosts] };
 }

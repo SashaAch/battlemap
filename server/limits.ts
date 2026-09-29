@@ -2,15 +2,23 @@
 
 import { isIPv4, isIPv6 } from "node:net";
 
+/** Expired keys are swept out at most this often, so a flood of new keys does not make every attempt slow. */
+const SWEEP_EVERY_MS = 10_000;
+/** The most keys a limiter keeps; beyond that a new key counts as used up (429), the safe side. */
+export const MAX_KEYS = 100_000;
+
 /** Counts attempts per key in a sliding window. An attempt is booked before the slow check it guards. */
 export class AttemptLimiter {
   readonly #max: number;
   readonly #windowMs: number;
+  readonly #maxKeys: number;
   readonly #attempts = new Map<string, number[]>();
+  #sweptAt = -Infinity;
 
-  constructor(max: number, windowMs: number) {
+  constructor(max: number, windowMs: number, maxKeys = MAX_KEYS) {
     this.#max = max;
     this.#windowMs = windowMs;
+    this.#maxKeys = maxKeys;
   }
 
   /**
@@ -18,8 +26,10 @@ export class AttemptLimiter {
    * Booking first means parallel requests cannot all pass the check before any of them is counted.
    */
   take(key: string, now: number): boolean {
-    if (this.#attempts.size > 10_000) this.#sweep(now);
-    const recent = (this.#attempts.get(key) ?? []).filter((time) => time > now - this.#windowMs);
+    if (now - this.#sweptAt >= SWEEP_EVERY_MS) this.#sweep(now);
+    const known = this.#attempts.get(key);
+    if (!known && this.#attempts.size >= this.#maxKeys) return false;
+    const recent = (known ?? []).filter((time) => time > now - this.#windowMs);
     this.#attempts.set(key, recent);
     if (recent.length >= this.#max) return false;
     recent.push(now);
@@ -36,6 +46,7 @@ export class AttemptLimiter {
   }
 
   #sweep(now: number): void {
+    this.#sweptAt = now;
     for (const [key, list] of this.#attempts) {
       if (list.every((time) => time <= now - this.#windowMs)) this.#attempts.delete(key);
     }
