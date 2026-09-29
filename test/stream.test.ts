@@ -18,7 +18,8 @@ import type { RunningServer } from "../server/app.ts";
 import { ERRORS } from "../server/errors.ts";
 import type { ErrorCode } from "../server/errors.ts";
 import { MAX_PINGS } from "../server/games.ts";
-import { SAVE_DELAY_MS } from "../server/scenes.ts";
+import { Database } from "../server/db.ts";
+import { SAVE_CEILING_MS, SAVE_DELAY_MS, SceneMemory } from "../server/scenes.ts";
 import { MAX_STREAMS_PER_USER } from "../server/stream.ts";
 
 // ---- a site in a temporary folder, with open registration so users are quick to make ----
@@ -688,6 +689,59 @@ describe("pings (R6)", () => {
 });
 
 describe("writing scenes to the database (plan 8.6)", () => {
+  test(`changes that never pause are written at most ${SAVE_CEILING_MS / 1000} s after the first one (artificial clocks)`, (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+    const dir = mkdtempSync(path.join(tmpdir(), "bm-stream-"));
+    const db = new Database(path.join(dir, "battlemap.db"));
+    t.after(() => {
+      db.close();
+      rmSync(dir, { recursive: true, force: true });
+    });
+    const owner = db.insertUser({
+      login: "gm_",
+      displayName: "GM",
+      passHash: new Uint8Array(32),
+      passSalt: new Uint8Array(16),
+      passParams: "scrypt:32768:8:1",
+      role: "user",
+      mustChangePassword: false,
+      createdAt: 0,
+    });
+    const game = db.insertGame("Склеп", "gm", owner.id, owner.id, 0);
+    const sceneId = db.insertScene(game.id, "Зал", JSON.stringify(newScene()), 0).id;
+    const failures: unknown[] = [];
+    const memory = new SceneMemory(db, () => Date.now(), (error) => failures.push(error));
+    const record = () => {
+      const found = db.findScene(game.id, sceneId);
+      assert.ok(found);
+      return found;
+    };
+
+    // A change every 500 ms for 12 s: the one-second pause never comes.
+    const STEP_MS = 500;
+    const writes: { at: number; stored: number; inMemory: number }[] = [];
+    let inMemory = 0;
+    for (let at = 0; at < 12_000; at += STEP_MS) {
+      inMemory = memory.change(record(), [["cells", `${at / STEP_MS},0`, "floor"]]);
+      const before = record().version;
+      t.mock.timers.tick(STEP_MS);
+      const after = record();
+      if (after.version !== before) {
+        writes.push({ at: Date.now(), stored: after.version, inMemory });
+        assert.equal(Object.keys(JSON.parse(after.stateJson).cells).length, inMemory, "the written state has every change so far");
+      }
+    }
+    assert.deepEqual(failures, []);
+    assert.ok(writes.length > 0, "written while the changes went on");
+    assert.ok(writes[0].at <= SAVE_CEILING_MS, `first write at ${writes[0].at} ms`);
+    assert.deepEqual(writes[0], { at: SAVE_CEILING_MS, stored: SAVE_CEILING_MS / STEP_MS, inMemory: SAVE_CEILING_MS / STEP_MS });
+    for (const write of writes) assert.equal(write.stored, write.inMemory, `at ${write.at} ms`);
+
+    // After the last change the usual second.
+    t.mock.timers.tick(SAVE_DELAY_MS);
+    assert.equal(record().version, inMemory);
+  });
+
   test("a change is written a second after the last change of the scene", async () => {
     const { site, users } = await siteWith("admin", "gm");
     const { gameId, sceneId } = await playedGame(site, users.gm);

@@ -413,7 +413,8 @@ export class Games {
    * Applies a change (plan 5.2, 6.2) and sends it, with the new version, to every stream that sees the scene,
    * the author's too: the server alone puts the changes in order (plan 5.3). An editor changes anything; a player
    * only moves tokens of the side "players" (R6), anything else is 403. A bad change is 400, a scene over 2 MiB
-   * 413; the scene stays as it was. The scene is written to the database a second after its last change.
+   * 413; the scene stays as it was. The scene is written to the database a second after its last change, at most
+   * 10 seconds after its first unsaved one (scenes.ts).
    */
   patchScene(user: User, gameId: number, sceneId: number, input: unknown): { version: number; editor: boolean } {
     const access = this.#access(user, gameId);
