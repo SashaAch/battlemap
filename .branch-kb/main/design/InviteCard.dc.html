@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Окно приглашения</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Onest:wght@400;500;600;700&amp;family=Alegreya:wght@500;700&amp;family=Alegreya+Sans:wght@400;500;700&amp;family=Golos+Text:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>body{margin:0}</style>
+</helmet>
+<div role="dialog" aria-label="Пригласить в игру" style="{{s.root}}">
+  <div style="display: flex; align-items: center; gap: 12px">
+    <h2 style="{{s.title}}">Пригласить в игру</h2>
+    <button type="button" aria-label="Закрыть" style="{{s.iconBtn}}"><dc-import name="Icon" glyph="close" size="20" hint-size="20px,20px"></dc-import></button>
+  </div>
+  <div style="{{s.muted}}">Шахты Фандалина · игра с мастером</div>
+
+  <div style="display: flex; gap: 20px; align-items: center">
+    <div style="{{s.qrWrap}}">
+      <dc-import name="QrMock" size="208" hint-size="208px,208px"></dc-import>
+    </div>
+    <ol style="{{s.steps}}">
+      <li>Друг наводит камеру телефона на код</li>
+      <li>Открывается сайт с приглашением</li>
+      <li>Он входит или регистрируется и нажимает «Войти в игру»</li>
+    </ol>
+  </div>
+
+  <label style="{{s.field}}">
+    <span style="{{s.label}}">Адрес для телефонов</span>
+    <select style="{{s.input}}">
+      <option>192.168.1.20 · домашняя сеть Wi-Fi</option>
+      <option>10.8.0.2 · VPN</option>
+    </select>
+  </label>
+
+  <div style="{{s.field}}">
+    <span style="{{s.label}}">Ссылка, чтобы переслать</span>
+    <div style="display: flex; gap: 8px">
+      <input type="text" readonly value="http://192.168.1.20:8080/#join=k7m2q9x4" aria-label="Ссылка приглашения" style="{{s.inputGrow}}">
+      <button type="button" style="{{s.secondary}}">
+        <dc-import name="Icon" glyph="link" size="16" hint-size="16px,16px"></dc-import>
+        Копировать
+      </button>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px">
+    <label style="{{s.field}}">
+      <span style="{{s.label}}">Сколько входов</span>
+      <input type="number" value="5" min="1" max="1000" style="{{s.input}}">
+    </label>
+    <label style="{{s.field}}">
+      <span style="{{s.label}}">Сколько дней</span>
+      <input type="number" value="7" min="1" max="365" style="{{s.input}}">
+    </label>
+  </div>
+
+  <sc-if value="{{admin}}" hint-placeholder-val="{{ true }}">
+    <div style="{{s.note}}">Вы администратор: по этому приглашению друг без учётной записи сразу зарегистрируется и попадёт в игру.</div>
+  </sc-if>
+
+  <div style="flex-grow: 1"></div>
+  <div style="display: flex; justify-content: flex-end; gap: 10px">
+    <button type="button" style="{{s.secondary}}">Новый код</button>
+    <button type="button" style="{{s.primary}}">Готово</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"theme":{"editor":"enum","default":"a","options":["a","b","c"]},"admin":{"editor":"boolean","default":true},"$preview":{"width":560,"height":780}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const T = {
+      a: { bg: '#1b1e23', fg: '#e9e7e2', muted: '#9aa1ab', line: '#2e333b', field: '#23272e', acc: '#5fb3a6', accFg: '#0d1614', note: '#1f2c2a', body: "'Onest', system-ui, sans-serif", head: "'Onest', system-ui, sans-serif", r: 12 },
+      b: { bg: '#f8f2e4', fg: '#2b2118', muted: '#6e5c46', line: '#d6c6a3', field: '#efe5cf', acc: '#8e2b20', accFg: '#fbf5ea', note: '#f1e1d6', body: "'Alegreya Sans', Georgia, sans-serif", head: "'Alegreya', Georgia, serif", r: 14 },
+      c: { bg: '#16181d', fg: '#ecebe8', muted: '#8d929b', line: '#2a2d35', field: '#22252c', acc: '#f2a93b', accFg: '#1a1204', note: '#2b2417', body: "'Golos Text', system-ui, sans-serif", head: "'Golos Text', system-ui, sans-serif", r: 12 },
+    };
+    const t = T[this.props.theme] ?? T.a;
+    const control = 'box-sizing:border-box;height:42px;padding:0 12px;border-radius:9px;border:1px solid ' + t.line + ';background:' + t.field + ';color:' + t.fg + ';font:inherit;font-size:15px;';
+    const s = {
+      root: 'width:560px;height:780px;box-sizing:border-box;padding:28px;display:flex;flex-direction:column;gap:18px;background:' + t.bg + ';color:' + t.fg + ';font-family:' + t.body + ';font-size:15px;border:1px solid ' + t.line + ';border-radius:' + t.r + 'px;',
+      title: 'margin:0;flex-grow:1;font-family:' + t.head + ';font-size:26px;font-weight:700;line-height:1.15;',
+      iconBtn: 'width:40px;height:40px;flex-shrink:0;border-radius:9px;border:0;background:transparent;color:' + t.muted + ';display:flex;align-items:center;justify-content:center;',
+      muted: 'margin-top:-10px;font-size:14px;color:' + t.muted + ';',
+      qrWrap: 'flex-shrink:0;padding:10px;border-radius:14px;background:#ffffff;border:1px solid ' + t.line + ';',
+      steps: 'margin:0;padding-left:20px;display:flex;flex-direction:column;gap:10px;font-size:15px;line-height:1.4;color:' + t.fg + ';',
+      field: 'display:flex;flex-direction:column;gap:6px;min-width:0;',
+      label: 'font-size:13px;color:' + t.muted + ';',
+      input: control + 'width:100%;',
+      inputGrow: control + 'flex-grow:1;min-width:0;font-size:14px;',
+      secondary: 'flex-shrink:0;display:flex;align-items:center;gap:6px;height:42px;padding:0 14px;border-radius:9px;border:1px solid ' + t.line + ';background:transparent;color:' + t.fg + ';font:inherit;font-size:15px;white-space:nowrap;',
+      primary: 'flex-shrink:0;height:42px;padding:0 20px;border-radius:9px;border:0;background:' + t.acc + ';color:' + t.accFg + ';font:inherit;font-size:15px;font-weight:700;white-space:nowrap;',
+      note: 'padding:10px 12px;border-radius:9px;background:' + t.note + ';font-size:14px;line-height:1.4;color:' + t.fg + ';',
+    };
+    return { s, admin: this.props.admin ?? true };
+  }
+}
+</script>
+</body>
+</html>

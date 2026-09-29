@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Кусок карты</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>body{margin:0}</style>
+</helmet>
+<div style="{{rootStyle}}">
+  <div style="{{gridStyle}}"></div>
+  <sc-for list="{{areas}}" as="a" hint-placeholder-count="12">
+    <div style="{{a.style}}"></div>
+  </sc-for>
+  <sc-for list="{{areas}}" as="a2" hint-placeholder-count="12">
+    <div style="{{a2.gridStyle}}"></div>
+  </sc-for>
+  <sc-for list="{{walls}}" as="w" hint-placeholder-count="3">
+    <div style="{{w.style}}"></div>
+  </sc-for>
+  <sc-for list="{{doors}}" as="dr" hint-placeholder-count="5">
+    <div style="{{dr.style}}"></div>
+  </sc-for>
+  <sc-if value="{{ruler}}" hint-placeholder-val="{{ false }}">
+    <div style="{{rulerLine}}"></div>
+    <div style="{{rulerLabel}}">15 фт · 3 кл.</div>
+  </sc-if>
+  <sc-for list="{{tokens}}" as="t" hint-placeholder-count="8">
+    <div style="{{t.style}}">{{t.initial}}</div>
+    <sc-if value="{{t.showName}}" hint-placeholder-val="{{ true }}">
+      <div style="{{t.labelStyle}}">{{t.name}}</div>
+    </sc-if>
+  </sc-for>
+  <sc-if value="{{ping}}" hint-placeholder-val="{{ false }}">
+    <div style="{{pingOuter}}"></div>
+    <div style="{{pingInner}}"></div>
+    <div style="{{pingLabel}}">Лидда: смотрите сюда</div>
+  </sc-if>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"width":{"editor":"int","default":900},"height":{"editor":"int","default":560},"cell":{"editor":"int","default":28},"ox":{"editor":"int","default":30},"oy":{"editor":"int","default":90},"voidColor":{"editor":"color","default":"#15171b"},"gridColor":{"editor":"color","default":"rgba(255,255,255,0.07)"},"wallColor":{"editor":"color","default":"#1b1a18"},"labelBg":{"editor":"color","default":"rgba(18,18,20,0.82)"},"labelFg":{"editor":"color","default":"#f2f0ea"},"names":{"editor":"boolean","default":true},"ping":{"editor":"boolean","default":false},"pingColor":{"editor":"color","default":"#f2c14e"},"pingX":{"editor":"int","default":18},"pingY":{"editor":"int","default":4},"ruler":{"editor":"boolean","default":false},"tokenStyle":{"editor":"enum","default":"flat","options":["flat","ring"]},"$preview":{"width":900,"height":560}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const p = this.props;
+    const W = Number(p.width ?? 900), H = Number(p.height ?? 560), c = Number(p.cell ?? 28);
+    const ox = Number(p.ox ?? 30), oy = Number(p.oy ?? 90);
+    const wall = p.wallColor ?? '#1b1a18';
+    const X = (x) => ox + x * c, Y = (y) => oy + y * c;
+    const T = { floor: '#9b9a94', wood: '#b9844b', dirt: '#7a5836', grass: '#6aa84f', brush: '#3d7a37', shallow: '#5ca6d4', lava: '#e8531d', rubble: '#8c8378' };
+    const hatch = (col) => 'background-image: repeating-linear-gradient(45deg, ' + col + ' 0 2px, transparent 2px 7px);';
+    const box0 = (x, y, w, h) => 'position:absolute;left:' + X(x) + 'px;top:' + Y(y) + 'px;width:' + (w * c) + 'px;height:' + (h * c) + 'px;';
+    // Grid over terrain: a dark and a light line side by side, so the cells show on light floors and dark water alike.
+    const line = 'rgba(0,0,0,0.30) 1px, rgba(255,255,255,0.22) 1px, rgba(255,255,255,0.22) 2px, transparent 2px';
+    const cellGrid = 'background-image:linear-gradient(' + line + '),linear-gradient(90deg,' + line + ');background-size:' + c + 'px ' + c + 'px;';
+    const rect = (x, y, w, h, t, extra) => ({ style: box0(x, y, w, h) + 'background-color:' + T[t] + ';' + (extra ?? ''), gridStyle: box0(x, y, w, h) + cellGrid });
+    const areas = [
+      rect(0, 2, 2, 10, 'grass'),
+      rect(2, 2, 2, 10, 'brush', hatch('rgba(255,255,255,0.28)')),
+      rect(4, 1, 10, 7, 'floor'),
+      rect(6, 5, 3, 1, 'lava'),
+      rect(14, 3, 8, 2, 'dirt'),
+      rect(22, 0, 8, 10, 'wood'),
+      rect(23, 2, 1, 1, 'rubble', hatch('rgba(0,0,0,0.35)')),
+      rect(25, 4, 1, 1, 'rubble', hatch('rgba(0,0,0,0.35)')),
+      rect(27, 6, 1, 1, 'rubble', hatch('rgba(0,0,0,0.35)')),
+      rect(24, 7, 1, 1, 'rubble', hatch('rgba(0,0,0,0.35)')),
+      rect(28, 3, 1, 1, 'rubble', hatch('rgba(0,0,0,0.35)')),
+      rect(25, 10, 3, 3, 'shallow', hatch('rgba(0,0,0,0.22)')),
+    ];
+    const box = (x, y, w, h, sides) => ({ style: 'position:absolute;box-sizing:border-box;left:' + (X(x) - 2) + 'px;top:' + (Y(y) - 2) + 'px;width:' + (w * c + 4) + 'px;height:' + (h * c + 4) + 'px;border-style:solid;border-color:' + wall + ';border-width:' + sides + ';' });
+    const walls = [box(4, 1, 10, 7, '4px'), box(14, 3, 8, 2, '4px 0'), box(22, 0, 8, 10, '4px')];
+    const door = (x, y) => ({ style: 'position:absolute;left:' + (X(x) - 4) + 'px;top:' + (Y(y) + c * 0.2) + 'px;width:8px;height:' + (c * 0.6) + 'px;background:#b9844b;border:1.5px solid ' + wall + ';border-radius:2px;' });
+    const doors = [door(4, 4), door(14, 3), door(14, 4), door(22, 3), door(22, 4)];
+    const S = { players: '#2f7de1', enemies: '#d23c3c', allies: '#2e9e57', neutral: '#c9971c' };
+    const ring = p.tokenStyle === 'ring';
+    const tok = (name, side, x, y, span) => {
+      const s = span * c * 0.84, l = X(x) + (span * c - s) / 2, t = Y(y) + (span * c - s) / 2;
+      const col = S[side];
+      const look = ring
+        ? 'background:#191a1e;color:#f2f0ea;border:3px ' + (side === 'enemies' ? 'dashed' : side === 'neutral' ? 'dotted' : 'solid') + ' ' + col + ';'
+        : 'background:' + col + ';color:#ffffff;border:2px solid rgba(0,0,0,0.45);';
+      return {
+        name, initial: name.slice(0, 1), showName: p.names ?? true,
+        style: 'position:absolute;box-sizing:border-box;left:' + l + 'px;top:' + t + 'px;width:' + s + 'px;height:' + s + 'px;border-radius:50%;display:flex;align-items:center;justify-content:center;font:600 ' + Math.round(s * 0.42) + 'px/1 system-ui,sans-serif;box-shadow:0 2px 4px rgba(0,0,0,0.35);' + look,
+        labelStyle: 'position:absolute;left:' + (X(x) + span * c / 2 - 40) + 'px;top:' + (t + s + 2) + 'px;width:80px;text-align:center;font:500 11px/1.2 system-ui,sans-serif;color:' + (p.labelFg ?? '#f2f0ea') + ';',
+      };
+    };
+    const tokens = [
+      tok('Тордек', 'players', 7, 2, 1), tok('Лидда', 'players', 9, 3, 1), tok('Мялиэ', 'players', 6, 6, 1),
+      tok('Сильдар', 'allies', 11, 5, 1), tok('Гоблин 1', 'enemies', 24, 2, 1), tok('Гоблин 2', 'enemies', 26, 6, 1),
+      tok('Огр', 'enemies', 27, 1, 2), tok('Кузнец', 'neutral', 28, 8, 1),
+    ];
+    const pc = p.pingColor ?? '#f2c14e';
+    const px = X(Number(p.pingX ?? 18)) + c / 2, py = Y(Number(p.pingY ?? 4)) + c / 2;
+    const circ = (r, w, a) => 'position:absolute;left:' + (px - r) + 'px;top:' + (py - r) + 'px;width:' + (2 * r) + 'px;height:' + (2 * r) + 'px;border-radius:50%;box-sizing:border-box;border:' + w + 'px solid ' + pc + ';opacity:' + a + ';';
+    const rx1 = X(7) + c / 2, ry1 = Y(2) + c / 2, rx2 = X(10) + c / 2, ry2 = Y(4) + c / 2;
+    const len = Math.hypot(rx2 - rx1, ry2 - ry1), ang = Math.atan2(ry2 - ry1, rx2 - rx1) * 180 / Math.PI;
+    return {
+      rootStyle: 'position:relative;overflow:hidden;width:' + W + 'px;height:' + H + 'px;background:' + (p.voidColor ?? '#15171b') + ';',
+      gridStyle: 'position:absolute;inset:0;background-image:linear-gradient(' + (p.gridColor ?? 'rgba(255,255,255,0.07)') + ' 1px, transparent 1px),linear-gradient(90deg,' + (p.gridColor ?? 'rgba(255,255,255,0.07)') + ' 1px, transparent 1px);background-size:' + c + 'px ' + c + 'px;background-position:' + ox + 'px ' + oy + 'px;',
+      areas, walls, doors, tokens,
+      ping: p.ping ?? false,
+      pingOuter: circ(c * 1.3, 3, 0.9), pingInner: circ(c * 0.55, 3, 1),
+      pingLabel: 'position:absolute;left:' + (px + c * 1.4) + 'px;top:' + (py - 10) + 'px;padding:3px 8px;border-radius:6px;white-space:nowrap;font:600 12px/1.3 system-ui,sans-serif;background:' + (p.labelBg ?? 'rgba(18,18,20,0.82)') + ';color:' + (p.labelFg ?? '#f2f0ea') + ';',
+      ruler: p.ruler ?? false,
+      rulerLine: 'position:absolute;left:' + rx1 + 'px;top:' + (ry1 - 1.5) + 'px;width:' + len + 'px;height:0;border-top:3px dashed ' + pc + ';transform-origin:0 50%;transform:rotate(' + ang + 'deg);',
+      rulerLabel: 'position:absolute;left:' + (rx2 + 10) + 'px;top:' + (ry2 - 12) + 'px;padding:3px 8px;border-radius:6px;font:600 12px/1.3 system-ui,sans-serif;background:' + (p.labelBg ?? 'rgba(18,18,20,0.82)') + ';color:' + (p.labelFg ?? '#f2f0ea') + ';',
+    };
+  }
+}
+</script>
+</body>
+</html>

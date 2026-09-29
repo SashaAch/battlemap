@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Вариант В, мастер</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500&amp;display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;font-family:'Golos Text',system-ui,sans-serif;background:#0c0d10;color:#ecebe8}
+a{color:#f2a93b}a:hover{color:#ffc56b}
+button,input,select{font-family:inherit}
+</style>
+</helmet>
+<div style="width: 1440px; height: 900px; position: relative; overflow: hidden; background: #0c0d10; color: #ecebe8; font-family: 'Golos Text', system-ui, sans-serif; font-size: 14px">
+  <dc-import name="MapMock" width="1440" height="900" cell="34" ox="210" oy="210" void-color="#0c0d10" grid-color="rgba(255,255,255,0.05)" wall-color="#0a0a0b" label-bg="rgba(22,24,29,0.92)" label-fg="#ecebe8" names="{{yes}}" token-style="ring" ping="{{yes}}" ping-color="{{accent}}" ruler="{{yes}}" hint-size="1440px,900px"></dc-import>
+
+  <div style="position: absolute; left: 16px; top: 16px; display: flex; align-items: center; gap: 10px; height: 48px; padding: 0 8px 0 10px; border-radius: 12px; background: rgba(22,24,29,0.94); border: 1px solid #2a2d35">
+    <div style="width: 28px; height: 28px; border-radius: 7px; background: {{accent}}; color: #1a1204; font-weight: 700; font-size: 12px; display: flex; align-items: center; justify-content: center">bm</div>
+    <span style="font-weight: 600">Шахты Фандалина</span>
+    <span style="color: #4a4e57">/</span>
+    <button type="button" style="display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 10px; border-radius: 8px; border: 0; background: #22252c; color: #ecebe8; font-size: 14px">
+      <dc-import name="Icon" glyph="eye" size="16" hint-size="16px,16px"></dc-import>
+      Вход в шахту
+      <dc-import name="Icon" glyph="chevron" size="16" hint-size="16px,16px"></dc-import>
+    </button>
+  </div>
+
+  <div style="position: absolute; right: 16px; top: 16px; display: flex; align-items: center; gap: 8px; height: 48px; padding: 0 8px; border-radius: 12px; background: rgba(22,24,29,0.94); border: 1px solid #2a2d35">
+    <div style="display: flex; align-items: center; gap: 6px; padding: 0 6px; font-size: 13px; color: #8d929b">
+      <span style="width: 8px; height: 8px; border-radius: 4px; background: #57c27a"></span>
+      Тордек, Лидда
+    </div>
+    <button type="button" style="display: flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px; border-radius: 8px; border: 0; background: {{accent}}; color: #1a1204; font-weight: 600; font-size: 14px">
+      <dc-import name="Icon" glyph="qr" size="16" hint-size="16px,16px"></dc-import>
+      Пригласить
+    </button>
+    <button type="button" aria-label="Меню" style="width: 34px; height: 34px; border-radius: 8px; border: 0; background: #22252c; color: #ecebe8; display: flex; align-items: center; justify-content: center"><dc-import name="Icon" glyph="menu" size="18" hint-size="18px,18px"></dc-import></button>
+  </div>
+
+  <nav aria-label="Инструменты" style="position: absolute; left: 16px; top: 80px; display: flex; flex-direction: column; gap: 4px; padding: 6px; border-radius: 12px; background: rgba(22,24,29,0.94); border: 1px solid #2a2d35">
+    <sc-for list="{{tools}}" as="t" hint-placeholder-count="10">
+      <sc-if value="{{t.gap}}" hint-placeholder-val="{{ false }}">
+        <div style="height: 1px; margin: 3px 6px; background: #2a2d35"></div>
+      </sc-if>
+      <button type="button" aria-label="{{t.label}}" title="{{t.label}}" style="{{t.style}}">
+        <dc-import name="Icon" glyph="{{t.icon}}" size="21" hint-size="21px,21px"></dc-import>
+      </button>
+    </sc-for>
+    <div style="height: 1px; margin: 3px 6px; background: #2a2d35"></div>
+    <button type="button" aria-label="Отменить (Ctrl+Z)" style="width: 44px; height: 40px; border-radius: 9px; border: 0; background: transparent; color: #b9bcc3; display: flex; align-items: center; justify-content: center"><dc-import name="Icon" glyph="undo" size="19" hint-size="19px,19px"></dc-import></button>
+  </nav>
+
+  <div style="position: absolute; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; align-items: center; gap: 14px; padding: 8px 12px; border-radius: 12px; background: rgba(22,24,29,0.96); border: 1px solid #2a2d35">
+    <span style="font-weight: 600">Фишки</span>
+    <div style="display: flex; gap: 4px">
+      <sc-for list="{{sides}}" as="s" hint-placeholder-count="4">
+        <button type="button" style="{{s.style}}">
+          <span style="{{s.mark}}"></span>
+          {{s.label}}
+        </button>
+      </sc-for>
+    </div>
+    <label style="display: flex; align-items: center; gap: 6px; color: #8d929b; font-size: 13px">Размер
+      <select style="height: 32px; border-radius: 8px; border: 1px solid #2a2d35; background: #22252c; color: #ecebe8; padding: 0 8px; font-size: 13px">
+        <option>Маленький</option>
+      </select>
+    </label>
+    <label style="display: flex; align-items: center; gap: 6px; color: #8d929b; font-size: 13px">Имя
+      <input type="text" value="Гоблин" style="width: 110px; height: 32px; border-radius: 8px; border: 1px solid #2a2d35; background: #22252c; color: #ecebe8; padding: 0 8px; font-size: 13px">
+    </label>
+  </div>
+
+  <div style="position: absolute; left: 16px; bottom: 18px; padding: 7px 10px; border-radius: 8px; background: rgba(22,24,29,0.9); border: 1px solid #2a2d35; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #b9bcc3">22,3 · 5 фт · 100%</div>
+
+  <div style="position: absolute; right: 0; top: 50%; transform: translateY(-50%); display: flex; flex-direction: column; gap: 4px">
+    <button type="button" style="width: 36px; height: 104px; border-radius: 10px 0 0 10px; border: 1px solid #2a2d35; border-right: 0; background: rgba(22,24,29,0.94); color: #ecebe8; writing-mode: vertical-rl; font-size: 13px">Сцены</button>
+    <button type="button" style="width: 36px; height: 120px; border-radius: 10px 0 0 10px; border: 1px solid #2a2d35; border-right: 0; background: rgba(22,24,29,0.94); color: #8d929b; writing-mode: vertical-rl; font-size: 13px">Участники</button>
+  </div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#f2a93b","options":["#f2a93b","#5fb3a6","#8fa7e8","#e46c5a"]},"$preview":{"width":1440,"height":900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#f2a93b';
+    const tools = [
+      ['select', 'Выбор (V)'], ['brush', 'Кисть (B)', 1], ['fill', 'Заливка (F)'], ['room', 'Комната (R)'], ['walls', 'Стены (W)'],
+      ['objects', 'Предметы (O)', 1], ['tokens', 'Фишки (T)'], ['pencil', 'Карандаш (P)'], ['ruler', 'Линейка (M)', 1], ['eraser', 'Ластик (E)'],
+    ].map(([icon, label, gap]) => ({
+      icon, label, gap: !!gap,
+      style: 'width:44px;height:40px;border-radius:9px;border:0;display:flex;align-items:center;justify-content:center;' + (icon === 'tokens' ? 'background:' + accent + ';color:#1a1204;' : 'background:transparent;color:#b9bcc3;'),
+    }));
+    const sides = [
+      ['Игроки', '#2f7de1', 'solid'], ['Противники', '#d23c3c', 'dashed'], ['Союзники', '#2e9e57', 'solid'], ['Нейтральные', '#c9971c', 'dotted'],
+    ].map(([label, col, line], i) => ({
+      label,
+      mark: 'width:14px;height:14px;border-radius:7px;box-sizing:border-box;border:3px ' + line + ' ' + col + ';',
+      style: 'display:flex;align-items:center;gap:6px;height:32px;padding:0 10px;border-radius:8px;font-size:13px;' + (i === 1 ? 'background:#2d3038;border:1px solid #4a4e57;color:#ecebe8;' : 'background:transparent;border:1px solid transparent;color:#b9bcc3;'),
+    }));
+    return { accent, tools, sides, yes: true };
+  }
+}
+</script>
+</body>
+</html>

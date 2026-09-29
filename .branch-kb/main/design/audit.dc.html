@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Аудит оформления battlemap</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&amp;display=swap" rel="stylesheet">
+<style>
+body{margin:0;font-family:'Golos Text',system-ui,sans-serif;background:#f4f2ee;color:#1d1c1a}
+a{color:#8a4b12}a:hover{color:#5e320b}
+</style>
+</helmet>
+<div style="width: 1440px; height: 1900px; box-sizing: border-box; padding: 64px; display: flex; flex-direction: column; gap: 40px; background: #f4f2ee; color: #1d1c1a; font-family: 'Golos Text', system-ui, sans-serif">
+  <header style="display: flex; flex-direction: column; gap: 10px">
+    <div style="font-size: 14px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; color: #6b665e">battlemap · аудит оформления · 29.09.2026</div>
+    <h1 style="margin: 0; font-size: 44px; line-height: 1.1; font-weight: 700">Как выглядит сейчас и что мешает</h1>
+    <p style="margin: 0; max-width: 900px; font-size: 18px; line-height: 1.5; color: #45423c">Снимки сделаны на сборке после этапа 5: мастер в игре, карта с двумя комнатами и восемью фишками, ширина 1280 px и телефон 375 px.</p>
+  </header>
+
+  <section style="display: flex; gap: 32px; align-items: flex-start">
+    <figure style="margin: 0; display: flex; flex-direction: column; gap: 8px">
+      <img src="/_blob/7cb7f56076825627b75dd00792227778" alt="Экран мастера в тёмной теме" style="width: 960px; height: 600px; object-fit: cover; border-radius: 10px; border: 1px solid #d9d4ca; display: block">
+      <figcaption style="font-size: 14px; color: #5c584f">Мастер в игре, тёмная тема, 1280 px</figcaption>
+    </figure>
+    <figure style="margin: 0; display: flex; flex-direction: column; gap: 8px">
+      <img src="/_blob/ac2f43921a81e7a4efd803337878a3d9" alt="Тот же экран на телефоне" style="width: 277px; height: 600px; object-fit: cover; object-position: top; border-radius: 10px; border: 1px solid #d9d4ca; display: block">
+      <figcaption style="font-size: 14px; color: #5c584f">Телефон, 375 px</figcaption>
+    </figure>
+  </section>
+
+  <section style="display: flex; gap: 32px; align-items: flex-start">
+    <figure style="margin: 0; display: flex; flex-direction: column; gap: 8px">
+      <img src="/_blob/f2ec51661559632ff48c8763ffcf0e14" alt="Экран мастера в теме Пергамент" style="width: 640px; height: 362px; object-fit: cover; border-radius: 10px; border: 1px solid #d9d4ca; display: block">
+      <figcaption style="font-size: 14px; color: #5c584f">Тема «Пергамент»</figcaption>
+    </figure>
+    <figure style="margin: 0; display: flex; flex-direction: column; gap: 8px">
+      <img src="/_blob/62772cd0a9a118a1a8e7cf2e5c98737c" alt="Экран Мои игры" style="width: 640px; height: 400px; object-fit: cover; border-radius: 10px; border: 1px solid #d9d4ca; display: block">
+      <figcaption style="font-size: 14px; color: #5c584f">«Мои игры»: инструменты доски остаются наверху</figcaption>
+    </figure>
+  </section>
+
+  <section style="display: flex; flex-direction: column; gap: 20px">
+    <h2 style="margin: 0; font-size: 28px; font-weight: 700">Двенадцать находок</h2>
+    <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); column-gap: 48px; row-gap: 18px">
+      <sc-for list="{{findings}}" as="f" hint-placeholder-count="12">
+        <div style="display: flex; gap: 14px; align-items: flex-start">
+          <div style="flex-shrink: 0; width: 32px; height: 32px; border-radius: 16px; background: #1d1c1a; color: #f4f2ee; font-size: 15px; font-weight: 600; display: flex; align-items: center; justify-content: center">{{f.n}}</div>
+          <div style="display: flex; flex-direction: column; gap: 4px">
+            <div style="font-size: 17px; font-weight: 600">{{f.title}}</div>
+            <div style="font-size: 15px; line-height: 1.45; color: #45423c">{{f.text}}</div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </section>
+
+  <section style="display: flex; gap: 24px; padding: 24px 28px; background: #e9e4da; border-radius: 12px">
+    <div style="flex-shrink: 0; width: 280px; font-size: 20px; font-weight: 700">Что остаётся в любом варианте</div>
+    <ul style="margin: 0; padding-left: 20px; display: flex; flex-direction: column; gap: 6px; font-size: 15px; line-height: 1.45; color: #36332d">
+      <li>Цвета местности и сторон фишек одинаковы во всех темах (Р36).</li>
+      <li>Шесть тем (Р23): вариант задаёт устройство экрана, а темы остаются раскрасками.</li>
+      <li>Русский и английский; у игрока «Выбор», «Линейка» и «Метка» (Р6).</li>
+      <li>Всё своими силами, без внешних пакетов; шрифт можно взять свой, файлом в сборке.</li>
+    </ul>
+  </section>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1440,"height":1900}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const findings = [
+      ['Всё в одной верхней полосе', 'Отмена, десять инструментов, диагонали, язык, тема и учётная запись стоят подряд; на 1280 px это уже две строки.'],
+      ['Язык и тема всегда на виду', 'Их меняют раз в жизни, а место рядом с инструментами они занимают постоянно.'],
+      ['Палитра местности при любом инструменте', 'С «Выбором», «Линейкой» или «Фишками» она не нужна, но забирает полосу слева.'],
+      ['Панель игры закрывает карту', 'Справа около четверти экрана, свернуть её нельзя.'],
+      ['Управление игрой одним столбцом', 'Сцены, участники, приглашение и «Удалить игру» друг под другом; опасная кнопка сразу под формой приглашения.'],
+      ['Список сцен трудно читать', '«Текущая» похожа на кнопку, «Переименовать» повторяется у каждой сцены, галочка видимости стоит отдельной строкой.'],
+      ['Инструменты только словами', 'Значков нет, горячие клавиши спрятаны во всплывающих подсказках.'],
+      ['Инструменты доски на чужих экранах', 'На «Моих играх» и «Администрировании» полоса с кистью и стенами остаётся, хотя там не работает.'],
+      ['На телефоне карты почти нет', 'Панели занимают больше половины высоты, доска остаётся узкой полосой.'],
+      ['Фишки различаются только цветом', 'Имя видно лишь при крупном масштабе; красных и зелёных трудно различить при нарушении цветового зрения.'],
+      ['Сетка в светлых темах громкая', 'Она тянется по всей пустоте вокруг карты, и сама карта теряется на фоне.'],
+      ['У сайта нет своего лица', 'Системный шрифт, нет названия на экране, темы отличаются только цветом.'],
+    ];
+    return { findings: findings.map((f, i) => ({ n: i + 1, title: f[0], text: f[1] })) };
+  }
+}
+</script>
+</body>
+</html>

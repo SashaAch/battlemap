@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Вариант В, игрок на телефоне</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600;700&amp;family=JetBrains+Mono:wght@500&amp;display=swap" rel="stylesheet">
+<style>
+*,*::before,*::after{box-sizing:border-box}
+body{margin:0;font-family:'Golos Text',system-ui,sans-serif;background:#0c0d10;color:#ecebe8}
+a{color:#f2a93b}a:hover{color:#ffc56b}
+button{font-family:inherit}
+</style>
+</helmet>
+<div style="width: 390px; height: 844px; position: relative; overflow: hidden; background: #0c0d10; color: #ecebe8; font-family: 'Golos Text', system-ui, sans-serif; font-size: 14px">
+  <dc-import name="MapMock" width="390" height="844" cell="34" ox="-120" oy="230" void-color="#0c0d10" grid-color="rgba(255,255,255,0.05)" wall-color="#0a0a0b" label-bg="rgba(22,24,29,0.92)" label-fg="#ecebe8" names="{{yes}}" token-style="ring" ping="{{yes}}" ping-x="6" ping-y="8" ping-color="{{accent}}" hint-size="390px,844px"></dc-import>
+
+  <div style="position: absolute; left: 12px; right: 12px; top: 12px; display: flex; align-items: center; gap: 8px; height: 52px; padding: 0 6px; border-radius: 14px; background: rgba(22,24,29,0.94); border: 1px solid #2a2d35">
+    <button type="button" aria-label="Мои игры" style="width: 44px; height: 44px; border-radius: 10px; border: 0; background: transparent; color: #ecebe8; display: flex; align-items: center; justify-content: center"><dc-import name="Icon" glyph="back" size="20" hint-size="20px,20px"></dc-import></button>
+    <div style="flex-grow: 1; display: flex; flex-direction: column">
+      <span style="font-weight: 600">Вход в шахту</span>
+      <span style="font-size: 12px; color: #8d929b">Шахты Фандалина · 2 в сети</span>
+    </div>
+    <button type="button" aria-label="Меню игры" style="width: 44px; height: 44px; border-radius: 10px; border: 0; background: transparent; color: #ecebe8; display: flex; align-items: center; justify-content: center"><dc-import name="Icon" glyph="menu" size="20" hint-size="20px,20px"></dc-import></button>
+  </div>
+
+  <nav aria-label="Инструменты игрока" style="position: absolute; right: 12px; bottom: 24px; display: flex; flex-direction: column; gap: 10px">
+    <sc-for list="{{tools}}" as="t" hint-placeholder-count="3">
+      <button type="button" aria-label="{{t.label}}" style="{{t.style}}">
+        <dc-import name="Icon" glyph="{{t.icon}}" size="24" hint-size="24px,24px"></dc-import>
+      </button>
+    </sc-for>
+  </nav>
+
+  <div style="position: absolute; left: 12px; bottom: 24px; padding: 8px 10px; border-radius: 10px; background: rgba(22,24,29,0.92); border: 1px solid #2a2d35; font-family: 'JetBrains Mono', monospace; font-size: 12px; color: #b9bcc3">Выбор · тяните свою фишку</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"accent":{"editor":"color","default":"#f2a93b","options":["#f2a93b","#5fb3a6","#8fa7e8","#e46c5a"]},"$preview":{"width":390,"height":844}}'>
+class Component extends DCLogic {
+  renderVals() {
+    const accent = this.props.accent ?? '#f2a93b';
+    const tools = [['ping', 'Метка'], ['ruler', 'Линейка'], ['select', 'Выбор']].map(([icon, label]) => ({
+      icon, label,
+      style: 'width:56px;height:56px;border-radius:28px;display:flex;align-items:center;justify-content:center;box-shadow:0 6px 16px rgba(0,0,0,0.45);' + (icon === 'select' ? 'border:0;background:' + accent + ';color:#1a1204;' : 'border:1px solid #2a2d35;background:rgba(22,24,29,0.96);color:#ecebe8;'),
+    }));
+    return { accent, tools, yes: true };
+  }
+}
+</script>
+</body>
+</html>
