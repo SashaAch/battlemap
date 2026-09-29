@@ -2,9 +2,10 @@
 // on a free port of 127.0.0.1 with the data in a temporary folder.
 
 import assert from "node:assert/strict";
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { scryptSync } from "node:crypto";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
-import { tmpdir } from "node:os";
+import { networkInterfaces, tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, test } from "node:test";
 
@@ -13,12 +14,22 @@ import { en } from "../client/src/i18n/en.ts";
 import { ru } from "../client/src/i18n/ru.ts";
 import { startServer } from "../server/app.ts";
 import type { RunningServer } from "../server/app.ts";
-import { Accounts, INVITE_LIFETIME_MS, LOGIN_MAX_FAILURES, LOGIN_WINDOW_MS, SESSION_LIFETIME_MS } from "../server/auth.ts";
+import {
+  Accounts,
+  DAY_MS,
+  LIMIT_WINDOW_MS,
+  MAX_FAILURES_PER_ADDRESS,
+  MAX_FAILURES_PER_LOGIN,
+  MAX_FAILURES_PER_LOGIN_AND_ADDRESS,
+  MAX_REGISTRATIONS_PER_ADDRESS,
+  SESSION_LIFETIME_MS,
+} from "../server/auth.ts";
 import { Database } from "../server/db.ts";
+import { addressKey } from "../server/limits.ts";
+import { siteLinks } from "../server/network.ts";
 import { ApiError, ERRORS } from "../server/errors.ts";
 import type { ErrorCode } from "../server/errors.ts";
 
-const DAY_MS = 24 * 60 * 60 * 1000;
 const ADMIN = { login: "admin", displayName: "Мастер", password: "admin-password" };
 
 // ---- a site in a temporary folder ----
@@ -43,8 +54,10 @@ async function start(dir: string, clock: { now: number }): Promise<Site> {
   return { dir, server, base: `http://127.0.0.1:${server.port}`, clock, log };
 }
 
-async function newSite(): Promise<Site> {
+/** `settings`, when given, is written to settings.json before the first start. */
+async function newSite(settings?: object): Promise<Site> {
   const dir = mkdtempSync(path.join(tmpdir(), "bm-auth-"));
+  if (settings) writeFileSync(path.join(dir, "settings.json"), JSON.stringify(settings));
   const site = await start(dir, { now: Date.UTC(2026, 0, 1) });
   cleanups.push(async () => {
     await site.server.close();
@@ -149,8 +162,17 @@ async function readyUser(site: Site, admin: string, name: string, password = `${
   return { id: created.id, cookie: signedIn.cookie };
 }
 
-/** A raw request: the path is sent exactly as given, the body is written as `chunks` and not ended. */
-function rawRequest(site: Site, method: string, target: string, headers: Record<string, string> = {}, chunks: string[] = []): Promise<{ status: number; text: string }> {
+interface RawReply {
+  status: number;
+  text: string;
+  headers: http.IncomingHttpHeaders;
+}
+
+/**
+ * A raw request: the path and headers are sent exactly as given. The body is written as `chunks`;
+ * with a declared length or chunked encoding the request is not ended, so the server must answer on its own.
+ */
+function rawRequest(site: Site, method: string, target: string, headers: Record<string, string> = {}, chunks: string[] = []): Promise<RawReply> {
   return new Promise((resolve, reject) => {
     const request = http.request({ host: "127.0.0.1", port: site.server.port, method, path: target, headers });
     request.on("response", (response) => {
@@ -159,7 +181,7 @@ function rawRequest(site: Site, method: string, target: string, headers: Record<
       response.on("data", (chunk: string) => (text += chunk));
       response.on("end", () => {
         request.destroy();
-        resolve({ status: response.statusCode ?? 0, text });
+        resolve({ status: response.statusCode ?? 0, text, headers: response.headers });
       });
     });
     request.on("error", reject);
@@ -181,7 +203,7 @@ describe("first start", () => {
   test("settings.json is created and a one-time administrator link is printed", async () => {
     const site = await newSite();
     const settings = JSON.parse(readFileSync(path.join(site.dir, "settings.json"), "utf8"));
-    assert.deepEqual(settings, { port: 8080, openRegistration: false });
+    assert.deepEqual(settings, { port: 8080, openRegistration: false, allowedHosts: [] });
     assert.ok(site.server.setupLink?.startsWith(`${site.base}/#setup=`));
     assert.ok(site.log.includes(site.server.setupLink ?? ""), "the link is printed");
     assert.ok(site.log.some((line) => line.includes("HTTP") && line.includes("открытым текстом")), "the HTTP warning is printed");
@@ -218,9 +240,9 @@ describe("first start", () => {
 describe("registration, sign-in, api/me", () => {
   test("registration by a code from the administrator, then sign-in and api/me", async () => {
     const { site, admin } = await siteWithAdmin();
-    const invite = await call(site, "POST", "/api/admin/invites", { cookie: admin });
+    const invite = await call(site, "POST", "/api/admin/invites", { cookie: admin, body: { maxUses: 1, days: 7 } });
     assert.equal(invite.status, 201);
-    assert.equal(invite.body.expiresAt, site.clock.now + INVITE_LIFETIME_MS);
+    assert.deepEqual({ ...invite.body, code: undefined }, { code: undefined, expiresAt: site.clock.now + 7 * DAY_MS, maxUses: 1 });
 
     const player = { login: "player_1", displayName: "  Игрок  ", password: "correct horse" };
     assertError(await call(site, "POST", "/api/auth/register", { body: player }), "auth.inviteInvalid");
@@ -247,8 +269,8 @@ describe("registration, sign-in, api/me", () => {
 
   test("an expired code does not register", async () => {
     const { site, admin } = await siteWithAdmin();
-    const invite = await call(site, "POST", "/api/admin/invites", { cookie: admin });
-    site.clock.now += INVITE_LIFETIME_MS;
+    const invite = await call(site, "POST", "/api/admin/invites", { cookie: admin, body: { maxUses: 5, days: 2 } });
+    site.clock.now += 2 * DAY_MS;
     const reply = await call(site, "POST", "/api/auth/register", { body: { login: "late", displayName: "L", password: "password1", code: invite.body.code } });
     assertError(reply, "auth.inviteInvalid");
   });
@@ -266,6 +288,7 @@ describe("registration, sign-in, api/me", () => {
     assertError(await call(site, "POST", "/api/auth/register", { body: { login: "free", displayName: "F", password: "password1" } }), "login.taken");
     assertError(await call(site, "POST", "/api/auth/register", { body: { login: "Free", displayName: "F", password: "password1" } }), "login.format");
     assertError(await call(site, "POST", "/api/auth/register", { body: { login: "ab", displayName: "F", password: "password1" } }), "login.format");
+    site.clock.now += LIMIT_WINDOW_MS; // stays under the limit on registrations per address
     assertError(await call(site, "POST", "/api/auth/register", { body: { login: "x".repeat(25), displayName: "F", password: "password1" } }), "login.format");
     assertError(await call(site, "POST", "/api/auth/register", { body: { login: "newbie", displayName: "   ", password: "password1" } }), "name.format");
     assertError(await call(site, "POST", "/api/auth/register", { body: { login: "newbie", displayName: "я".repeat(41), password: "password1" } }), "name.format");
@@ -285,50 +308,243 @@ describe("registration, sign-in, api/me", () => {
   });
 });
 
-describe("password guessing", () => {
-  test("the 11th failed attempt in 15 minutes from one address gets 429, even with the right password", async () => {
+/** Accounts on a database of their own with a clock the test moves; the first administrator exists. */
+async function directAccounts(): Promise<{ db: Database; accounts: Accounts; clock: { now: number } }> {
+  const dir = mkdtempSync(path.join(tmpdir(), "bm-auth-"));
+  const db = new Database(path.join(dir, "battlemap.db"));
+  cleanups.push(async () => {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const clock = { now: Date.UTC(2026, 0, 1) };
+  const accounts = new Accounts(db, () => clock.now);
+  await accounts.register({ ...ADMIN, setup: accounts.startSetup() ?? "" }, false, "127.0.0.1");
+  return { db, accounts, clock };
+}
+
+/** "ok", or the error code the promise failed with. */
+const outcome = (promise: Promise<unknown>): Promise<string> => promise.then(() => "ok", (error: ApiError) => error.code);
+
+describe("password guessing (R39)", () => {
+  test("per address: 10 failures are checked, the 11th attempt in 15 minutes gets 429 even with the right password", async () => {
     const { site } = await siteWithAdmin();
-    for (let attempt = 1; attempt <= LOGIN_MAX_FAILURES; attempt++) {
+    for (let attempt = 1; attempt <= MAX_FAILURES_PER_ADDRESS; attempt++) {
       // Different logins: the address limit alone must stop it.
       assertError(await login(site, `guess_${attempt}`, "wrong-password"), "auth.invalid");
     }
     assertError(await login(site, "admin", ADMIN.password), "auth.tooManyAttempts");
 
-    site.clock.now += LOGIN_WINDOW_MS;
+    site.clock.now += LIMIT_WINDOW_MS - 1;
+    assertError(await login(site, "admin", ADMIN.password), "auth.tooManyAttempts");
+    site.clock.now += 1;
     assert.equal((await login(site, "admin", ADMIN.password)).status, 200);
   });
 
-  test("the 11th failed attempt in 15 minutes on one login gets 429, from any address", async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "bm-auth-"));
-    const db = new Database(path.join(dir, "battlemap.db"));
-    cleanups.push(async () => {
-      db.close();
-      rmSync(dir, { recursive: true, force: true });
-    });
-    const clock = { now: Date.UTC(2026, 0, 1) };
-    const accounts = new Accounts(db, () => clock.now);
-    const setup = accounts.startSetup() ?? "";
-    await accounts.register({ ...ADMIN, setup }, false);
-
-    const failure = (promise: Promise<unknown>) => promise.then(() => "ok", (error: ApiError) => error.code);
-    for (let attempt = 1; attempt <= LOGIN_MAX_FAILURES; attempt++) {
-      assert.equal(await failure(accounts.login("admin", "wrong-password", `10.0.0.${attempt}`)), "auth.invalid");
+  test("per login and address: 10 failures close the login for that address only", async () => {
+    const { accounts, clock } = await directAccounts();
+    for (let attempt = 1; attempt <= MAX_FAILURES_PER_LOGIN_AND_ADDRESS; attempt++) {
+      assert.equal(await outcome(accounts.login("admin", "wrong-password", "10.0.0.1")), "auth.invalid", `attempt ${attempt}`);
     }
-    assert.equal(await failure(accounts.login("admin", ADMIN.password, "10.0.1.1")), "auth.tooManyAttempts");
-    // Only this login is blocked, not the addresses.
-    assert.equal(await failure(accounts.login("other", "wrong-password", "10.0.0.1")), "auth.invalid");
+    assert.equal(await outcome(accounts.login("admin", ADMIN.password, "10.0.0.1")), "auth.tooManyAttempts");
+    assert.equal(await outcome(accounts.login("admin", ADMIN.password, "10.0.0.2")), "ok", "another address still signs in");
+    clock.now += LIMIT_WINDOW_MS;
+    assert.equal(await outcome(accounts.login("admin", ADMIN.password, "10.0.0.1")), "ok");
+  });
 
-    clock.now += LOGIN_WINDOW_MS - 1;
-    assert.equal(await failure(accounts.login("admin", ADMIN.password, "10.0.1.1")), "auth.tooManyAttempts");
-    clock.now += 1;
-    assert.equal(await failure(accounts.login("admin", ADMIN.password, "10.0.1.1")), "ok");
+  test("per login from all addresses: 100 failures are checked, the 101st attempt gets 429 from any address", async () => {
+    const { accounts, clock } = await directAccounts();
+    const address = (n: number): string => `10.${Math.floor(n / 200)}.${n % 200}.1`;
+    const first = await Promise.all(
+      Array.from({ length: MAX_FAILURES_PER_LOGIN - 1 }, (_, n) => outcome(accounts.login("admin", "wrong-password", address(n)))),
+    );
+    assert.deepEqual(new Set(first), new Set(["auth.invalid"]));
+    assert.equal(await outcome(accounts.login("admin", "wrong-password", address(500))), "auth.invalid", "the 100th failure");
+    assert.equal(await outcome(accounts.login("admin", ADMIN.password, address(501))), "auth.tooManyAttempts", "the 101st attempt");
+    assert.equal(await outcome(accounts.login("other", "wrong-password", address(501))), "auth.invalid", "other logins are open");
+
+    clock.now += LIMIT_WINDOW_MS;
+    assert.equal(await outcome(accounts.login("admin", ADMIN.password, address(501))), "ok");
+  });
+
+  test("a wrong current password when changing it counts the same: the 11th attempt gets 429", async () => {
+    const { site, admin } = await siteWithAdmin();
+    const change = (currentPassword: string) =>
+      call(site, "POST", "/api/me/password", { cookie: admin, body: { currentPassword, newPassword: "a-brand-new-password" } });
+    for (let attempt = 1; attempt <= MAX_FAILURES_PER_LOGIN_AND_ADDRESS; attempt++) {
+      assertError(await change("wrong-password"), "password.wrong");
+    }
+    assertError(await change(ADMIN.password), "auth.tooManyAttempts");
+    assertError(await login(site, "admin", ADMIN.password), "auth.tooManyAttempts");
   });
 
   test("parallel attempts cannot slip past the limit", async () => {
     const { site } = await siteWithAdmin();
     const replies = await Promise.all(Array.from({ length: 15 }, () => login(site, "admin", "wrong-password")));
     const statuses = replies.map((reply) => reply.status).sort();
-    assert.deepEqual(statuses, [...Array(LOGIN_MAX_FAILURES).fill(401), ...Array(5).fill(429)]);
+    assert.deepEqual(statuses, [...Array(MAX_FAILURES_PER_ADDRESS).fill(401), ...Array(5).fill(429)]);
+  });
+
+  test("IPv6 addresses count by their /64 network, IPv4-mapped addresses as IPv4", async () => {
+    assert.equal(addressKey("2001:db8:1:2::5"), "2001:db8:1:2::/64");
+    assert.equal(addressKey("2001:0DB8:0001:0002:ffff:1:2:3"), "2001:db8:1:2::/64");
+    assert.equal(addressKey("fe80::1%eth0"), "fe80:0:0:0::/64");
+    assert.equal(addressKey("::1"), "0:0:0:0::/64");
+    assert.equal(addressKey("64:ff9b::10.0.0.1"), "64:ff9b:0:0::/64");
+    assert.equal(addressKey("::ffff:192.168.1.5"), "192.168.1.5");
+    assert.equal(addressKey("192.168.1.5"), "192.168.1.5");
+
+    const { accounts } = await directAccounts();
+    for (let attempt = 1; attempt <= MAX_FAILURES_PER_ADDRESS; attempt++) {
+      assert.equal(await outcome(accounts.login(`guess_${attempt}`, "wrong-password", `2001:db8:1:2::${attempt}`)), "auth.invalid");
+      assert.equal(await outcome(accounts.login(`guess_${attempt}`, "wrong-password", "::ffff:10.1.1.1")), "auth.invalid");
+    }
+    assert.equal(await outcome(accounts.login("admin", ADMIN.password, "2001:db8:1:2:ffff::9")), "auth.tooManyAttempts");
+    assert.equal(await outcome(accounts.login("admin", ADMIN.password, "10.1.1.1")), "auth.tooManyAttempts");
+    assert.equal(await outcome(accounts.login("admin", ADMIN.password, "2001:db8:1:3::1")), "ok", "the next /64 is another network");
+  });
+
+  test("a hash made with older scrypt parameters still signs in and is made again with the current ones", async () => {
+    const { db, accounts } = await directAccounts();
+    const salt = Buffer.alloc(16, 7);
+    db.insertUser({
+      login: "old_timer",
+      displayName: "Old",
+      passHash: scryptSync("old-password", salt, 64, { N: 2 ** 14, r: 8, p: 1 }),
+      passSalt: salt,
+      passParams: "scrypt:16384:8:1",
+      role: "user",
+      mustChangePassword: false,
+      createdAt: 0,
+    });
+    assert.equal(await outcome(accounts.login("old_timer", "old-password", "10.0.0.1")), "ok");
+    assert.equal(db.findUserByLogin("old_timer")?.passParams, "scrypt:32768:8:1");
+    assert.equal(await outcome(accounts.login("old_timer", "old-password", "10.0.0.1")), "ok");
+  });
+});
+
+describe("registration limits and codes (R38, R39)", () => {
+  test("registration by code or open registration: the 11th attempt in 15 minutes from one address gets 429", async () => {
+    const { site, admin } = await siteWithAdmin();
+    await call(site, "PUT", "/api/admin/settings", { cookie: admin, body: { openRegistration: true } });
+    const register = (loginName: string) => call(site, "POST", "/api/auth/register", { body: { login: loginName, displayName: "N", password: "password1" } });
+    for (let attempt = 1; attempt <= MAX_REGISTRATIONS_PER_ADDRESS; attempt++) {
+      // Successful and failed registrations count alike.
+      const reply = await register(attempt % 2 ? `user_${attempt}` : "Bad Login");
+      assert.equal(reply.status, attempt % 2 ? 201 : 400, `attempt ${attempt}`);
+    }
+    assertError(await register("user_eleven"), "auth.tooManyRegistrations");
+    site.clock.now += LIMIT_WINDOW_MS;
+    assert.equal((await register("user_eleven")).status, 201);
+  });
+
+  test("a code is used as many times as the administrator allows, also by parallel requests", async () => {
+    const { site, admin } = await siteWithAdmin();
+    const invite = await call(site, "POST", "/api/admin/invites", { cookie: admin, body: { maxUses: 3, days: 1 } });
+    const replies = await Promise.all(
+      Array.from({ length: 6 }, (_, n) =>
+        call(site, "POST", "/api/auth/register", { body: { login: `racer_${n}`, displayName: "R", password: "password1", code: invite.body.code } }),
+      ),
+    );
+    assert.deepEqual(replies.map((reply) => reply.status).sort(), [201, 201, 201, 403, 403, 403]);
+    for (const reply of replies.filter((entry) => entry.status === 403)) assertError(reply, "auth.inviteInvalid");
+    const users = await call(site, "GET", "/api/admin/users", { cookie: admin });
+    assert.equal(users.body.users.length, 4);
+  });
+
+  test("uses and days of a code are whole numbers within bounds", async () => {
+    const { site, admin } = await siteWithAdmin();
+    const invite = (body: object) => call(site, "POST", "/api/admin/invites", { cookie: admin, body });
+    for (const body of [{}, { maxUses: 1 }, { days: 1 }, { maxUses: 0, days: 1 }, { maxUses: 1001, days: 1 }, { maxUses: 1.5, days: 1 }, { maxUses: "3", days: 1 }, { maxUses: 1, days: 0 }, { maxUses: 1, days: 366 }]) {
+      assertError(await invite(body), "request.format");
+    }
+    const longest = await invite({ maxUses: 1000, days: 365 });
+    assert.equal(longest.status, 201);
+    assert.equal(longest.body.expiresAt, site.clock.now + 365 * DAY_MS);
+  });
+
+  test("with openRegistration in settings.json and no users, only the setup link registers", async () => {
+    const site = await newSite({ openRegistration: true });
+    assert.deepEqual((await call(site, "GET", "/api/me")).body, { error: "auth.required", openRegistration: false });
+    assertError(await call(site, "POST", "/api/auth/register", { body: { login: "early", displayName: "E", password: "password1" } }), "auth.inviteInvalid");
+    assert.equal((await call(site, "POST", "/api/auth/register", { body: { ...ADMIN, setup: setupToken(site) } })).status, 201);
+    assert.equal((await call(site, "POST", "/api/auth/register", { body: { login: "later", displayName: "L", password: "password1" } })).status, 201);
+  });
+
+  test("the setup link makes one administrator, also under parallel requests", async () => {
+    const site = await newSite();
+    const token = setupToken(site);
+    const replies = await Promise.all(
+      ["first_admin", "second_admin"].map((name) => call(site, "POST", "/api/auth/register", { body: { login: name, displayName: name, password: "password1", setup: token } })),
+    );
+    assert.deepEqual(replies.map((reply) => reply.status).sort(), [201, 403]);
+    assertError(replies.find((reply) => reply.status === 403) as Reply, "auth.setupInvalid");
+  });
+});
+
+describe("roles (R38)", () => {
+  test("an administrator makes another user an administrator and takes it back, but not from themselves", async () => {
+    const { site, admin } = await siteWithAdmin();
+    const user = await readyUser(site, admin, "erin");
+    const setRole = (id: number, role: unknown, cookie = admin) => call(site, "POST", "/api/admin/users", { cookie, body: { action: "setRole", id, role } });
+
+    assertError(await call(site, "GET", "/api/admin/users", { cookie: user.cookie }), "auth.forbidden");
+    assert.equal((await setRole(user.id, "admin")).body.user.role, "admin");
+    assert.equal((await call(site, "GET", "/api/admin/users", { cookie: user.cookie })).status, 200, "the new role works at once");
+
+    const me = await call(site, "GET", "/api/me", { cookie: admin });
+    assertError(await setRole(me.body.id, "user"), "admin.self");
+    assertError(await setRole(user.id, "root"), "request.format");
+    assertError(await setRole(999, "user"), "user.notFound");
+
+    assert.equal((await setRole(user.id, "user")).body.user.role, "user");
+    assertError(await call(site, "GET", "/api/admin/users", { cookie: user.cookie }), "auth.forbidden");
+  });
+});
+
+describe("Host names (DNS rebinding)", () => {
+  test("a request with a foreign Host is refused, even with a matching Origin", async () => {
+    const { site } = await siteWithAdmin();
+    const port = site.server.port;
+    for (const host of [`evil.example:${port}`, `evil.example`, `127.0.0.1.evil.example:${port}`, `localhost.evil.example:${port}`]) {
+      const page = await rawRequest(site, "GET", "/", { Host: host });
+      assert.deepEqual({ status: page.status, text: page.text }, { status: 403, text: '{"error":"request.host"}' }, host);
+      const body = JSON.stringify({ login: "admin", password: ADMIN.password });
+      const signIn = await rawRequest(
+        site,
+        "POST",
+        "/api/auth/login",
+        { Host: host, Origin: `http://${host}`, "Content-Type": "application/json", "Content-Length": String(body.length) },
+        [body],
+      );
+      assert.deepEqual({ status: signIn.status, text: signIn.text }, { status: 403, text: '{"error":"request.host"}' }, host);
+    }
+  });
+
+  test("localhost, 127.0.0.1, [::1] and allowedHosts from settings.json are accepted", async () => {
+    const site = await newSite({ allowedHosts: ["Battlemap.Example"] });
+    const port = site.server.port;
+    for (const host of [`localhost:${port}`, `127.0.0.1:${port}`, `[::1]:${port}`, `battlemap.example:${port}`, `BATTLEMAP.example`]) {
+      assert.equal((await rawRequest(site, "GET", "/api/me", { Host: host })).status, 401, host);
+    }
+    const body = JSON.stringify({ login: "nobody", password: "wrong-password" });
+    const signIn = await rawRequest(
+      site,
+      "POST",
+      "/api/auth/login",
+      { Host: `battlemap.example:${port}`, Origin: `http://battlemap.example:${port}`, "Content-Type": "application/json", "Content-Length": String(body.length) },
+      [body],
+    );
+    assert.equal(signIn.status, 401, "the Origin is compared with the allowed Host");
+  });
+
+  test("the start-up links name localhost and the network addresses of this computer", () => {
+    const links = siteLinks(8080);
+    assert.equal(links[0], "http://localhost:8080/");
+    const ipv4 = Object.values(networkInterfaces())
+      .flatMap((list) => list ?? [])
+      .filter((entry) => entry.family === "IPv4" && !entry.internal);
+    for (const entry of ipv4) assert.ok(links.includes(`http://${entry.address}:8080/`), entry.address);
+    assert.ok(links.every((link) => !/\[fe[89ab]/i.test(link)), "no link-local IPv6");
   });
 });
 
@@ -366,16 +582,17 @@ describe("forged and oversized requests", () => {
     const { site, admin } = await siteWithAdmin();
     const headers = { Origin: site.base, "Content-Type": "application/json" };
     const tooLarge = { status: 413, text: '{"error":"request.tooLarge"}' };
+    const short = (reply: RawReply) => ({ status: reply.status, text: reply.text });
 
     // A declared length over the limit is refused before anything is read.
-    assert.deepEqual(await rawRequest(site, "POST", "/api/auth/login", { ...headers, "Content-Length": String(4 * 1024 + 1) }), tooLarge);
-    assert.deepEqual(await rawRequest(site, "POST", "/api/auth/register", { ...headers, "Content-Length": String(4 * 1024 + 1) }), tooLarge);
+    assert.deepEqual(short(await rawRequest(site, "POST", "/api/auth/login", { ...headers, "Content-Length": String(4 * 1024 + 1) })), tooLarge);
+    assert.deepEqual(short(await rawRequest(site, "POST", "/api/auth/register", { ...headers, "Content-Length": String(4 * 1024 + 1) })), tooLarge);
     assert.deepEqual(
-      await rawRequest(site, "PUT", "/api/me/settings", { ...headers, Cookie: admin, "Content-Length": String(2 * 1024 * 1024 + 1) }),
+      short(await rawRequest(site, "PUT", "/api/me/settings", { ...headers, Cookie: admin, "Content-Length": String(2 * 1024 * 1024 + 1) })),
       tooLarge,
     );
     // A stream without a length is cut at the limit: the request is never finished, the answer still comes.
-    assert.deepEqual(await rawRequest(site, "POST", "/api/auth/login", { ...headers, "Transfer-Encoding": "chunked" }, ["x".repeat(3000), "x".repeat(3000)]), tooLarge);
+    assert.deepEqual(short(await rawRequest(site, "POST", "/api/auth/login", { ...headers, "Transfer-Encoding": "chunked" }, ["x".repeat(3000), "x".repeat(3000)])), tooLarge);
 
     const padded = JSON.stringify({ login: "admin", password: ADMIN.password, pad: "x".repeat(4 * 1024 - 60) });
     assert.ok(Buffer.byteLength(padded) <= 4 * 1024);
@@ -513,7 +730,8 @@ describe("rights on every request", () => {
     ["POST", "/api/admin/users", { action: "create", login: "sneaky", displayName: "S" }],
     ["POST", "/api/admin/users", { action: "resetPassword", id: 1 }],
     ["POST", "/api/admin/users", { action: "setDisabled", id: 1, disabled: true }],
-    ["POST", "/api/admin/invites", {}],
+    ["POST", "/api/admin/users", { action: "setRole", id: 1, role: "user" }],
+    ["POST", "/api/admin/invites", { maxUses: 1, days: 1 }],
     ["GET", "/api/admin/settings", undefined],
     ["PUT", "/api/admin/settings", { openRegistration: true }],
   ];
@@ -596,14 +814,15 @@ describe("error codes", () => {
 });
 
 describe("what is kept on disk", () => {
-  test("the data folder holds neither passwords nor session tokens in plain text", async () => {
+  test("the data folder holds no passwords, session tokens or registration codes in plain text", async () => {
     const { site, admin } = await siteWithAdmin();
     const user = await readyUser(site, admin, "dana", "dana-secret-password");
     const signedIn = await login(site, "dana", "dana-secret-password");
+    const invite = await call(site, "POST", "/api/admin/invites", { cookie: admin, body: { maxUses: 5, days: 3 } });
     // Closed so that everything is on disk; a new server is started below for the cleanup to close.
     await site.server.close();
 
-    const secrets = [ADMIN.password, "dana-secret-password", admin, user.cookie, signedIn.cookie ?? ""].map((secret) => secret.replace(/^bm_session=/, ""));
+    const secrets = [ADMIN.password, "dana-secret-password", admin, user.cookie, signedIn.cookie ?? "", invite.body.code].map((secret) => secret.replace(/^bm_session=/, ""));
     const files = readdirSync(site.dir);
     assert.ok(files.includes("battlemap.db"));
     for (const file of files) {
@@ -637,14 +856,44 @@ describe("client files", () => {
     }
   });
 
-  test("every response carries the security headers", async () => {
+  test("every response carries the security headers: 200, 304, 401, 403, 404, 413, 415", async () => {
     const site = await newSite();
-    for (const url of ["/", "/api/me", "/nothing.txt"]) {
-      const response = await fetch(site.base + url);
-      assert.equal(response.headers.get("content-security-policy"), "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'", url);
-      assert.equal(response.headers.get("x-content-type-options"), "nosniff", url);
-      assert.equal(response.headers.get("referrer-policy"), "no-referrer", url);
+    const json = { Origin: site.base, "Content-Type": "application/json" };
+    const page = await rawRequest(site, "GET", "/");
+    const replies: [number, RawReply][] = [
+      [200, page],
+      [304, await rawRequest(site, "GET", "/", { "If-None-Match": String(page.headers.etag) })],
+      [401, await rawRequest(site, "GET", "/api/me")],
+      [403, await rawRequest(site, "POST", "/api/auth/login", { "Content-Type": "application/json", "Content-Length": "2" }, ["{}"])],
+      [403, await rawRequest(site, "GET", "/", { Host: "evil.example" })],
+      [404, await rawRequest(site, "GET", "/nothing.txt")],
+      [413, await rawRequest(site, "POST", "/api/auth/login", { ...json, "Content-Length": String(5000) })],
+      [415, await rawRequest(site, "POST", "/api/auth/login", { Origin: site.base, "Content-Type": "text/plain", "Content-Length": "2" }, ["{}"])],
+    ];
+    for (const [status, reply] of replies) {
+      assert.equal(reply.status, status);
+      assert.equal(reply.headers["content-security-policy"], "default-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'", `${status}`);
+      assert.equal(reply.headers["x-content-type-options"], "nosniff", `${status}`);
+      assert.equal(reply.headers["referrer-policy"], "no-referrer", `${status}`);
     }
+  });
+
+  test("a body the client breaks off is not logged as a server error", async () => {
+    const site = await newSite();
+    await new Promise<void>((resolve) => {
+      const request = http.request({
+        host: "127.0.0.1",
+        port: site.server.port,
+        method: "POST",
+        path: "/api/auth/login",
+        headers: { Origin: site.base, "Content-Type": "application/json", "Content-Length": "100" },
+      });
+      request.on("error", () => resolve());
+      request.on("close", () => resolve());
+      request.write('{"login":', () => setTimeout(() => request.destroy(), 50));
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    assert.deepEqual(site.log.filter((line) => /error/i.test(line)), []);
   });
 
   test("nothing outside client/ and nothing but the page files is served", async () => {
@@ -674,7 +923,7 @@ describe("client files", () => {
     ];
     for (const target of targets) {
       const reply = await rawRequest(site, "GET", target);
-      assert.deepEqual(reply, { status: 404, text: '{"error":"request.notFound"}' }, target);
+      assert.deepEqual({ status: reply.status, text: reply.text }, { status: 404, text: '{"error":"request.notFound"}' }, target);
     }
     const post = await call(site, "POST", "/index.html");
     assertError(post, "request.notFound");

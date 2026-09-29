@@ -12,6 +12,7 @@ import type { TLSSocket } from "node:tls";
 import { Accounts, checkSettings, meView, SESSION_COOKIE, SESSION_LIFETIME_MS, userView } from "./auth.ts";
 import type { Authenticated } from "./auth.ts";
 import { Database } from "./db.ts";
+import type { Role } from "./db.ts";
 import { ApiError } from "./errors.ts";
 import {
   booleanField,
@@ -25,12 +26,14 @@ import {
   optionalStringField,
   readCookie,
   readJsonObject,
+  RequestAborted,
   requestPath,
   SECURITY_HEADERS,
   sendJson,
   serveClientFile,
   stringField,
 } from "./http.ts";
+import { hostName, HostCheck, siteLinks } from "./network.ts";
 import { SettingsFile } from "./settings.ts";
 
 const CLIENT_DIR = path.join(import.meta.dirname, "..", "client");
@@ -83,6 +86,11 @@ interface Route {
   handle(call: Call): Reply | Promise<Reply>;
 }
 
+function roleField(body: Record<string, unknown>): Role {
+  if (body.role !== "user" && body.role !== "admin") throw new ApiError("request.format");
+  return body.role;
+}
+
 function signedIn(call: Call): Authenticated {
   if (!call.auth) throw new ApiError("auth.required");
   return call.auth;
@@ -97,7 +105,7 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile): Map<string, Rou
       {
         access: "anyone",
         limit: AUTH_BODY_LIMIT,
-        async handle({ body }) {
+        async handle({ body, address }) {
           const { user, token } = await accounts.register(
             {
               login: stringField(body, "login"),
@@ -107,6 +115,7 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile): Map<string, Rou
               setup: optionalStringField(body, "setup"),
             },
             openRegistration(),
+            address,
           );
           return { status: 201, body: meView(user), session: token };
         },
@@ -188,8 +197,7 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile): Map<string, Rou
           const admin = signedIn(call).user;
           switch (body.action) {
             case "create": {
-              const role = body.role === undefined ? "user" : body.role;
-              if (role !== "user" && role !== "admin") throw new ApiError("request.format");
+              const role = body.role === undefined ? "user" : roleField(body);
               const created = await accounts.createUser(stringField(body, "login"), stringField(body, "displayName"), role);
               return { status: 201, body: { user: userView(created.user), password: created.password } };
             }
@@ -199,6 +207,8 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile): Map<string, Rou
             }
             case "setDisabled":
               return { status: 200, body: { user: userView(accounts.setDisabled(admin, idField(body, "id"), booleanField(body, "disabled"))) } };
+            case "setRole":
+              return { status: 200, body: { user: userView(accounts.setRole(admin, idField(body, "id"), roleField(body))) } };
             default:
               throw new ApiError("request.format");
           }
@@ -211,7 +221,8 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile): Map<string, Rou
         access: "admin",
         limit: BODY_LIMIT,
         handle(call) {
-          return { status: 201, body: accounts.createInvite(signedIn(call).user) };
+          const { body } = call;
+          return { status: 201, body: accounts.createInvite(signedIn(call).user, idField(body, "maxUses"), idField(body, "days")) };
         },
       },
     ],
@@ -256,6 +267,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     const accounts = new Accounts(db, now);
     setupToken = accounts.startSetup();
     const routes = makeRoutes(accounts, settings);
+    const hosts = new HostCheck(settings.current.allowedHosts);
 
     const handleApi = async (req: IncomingMessage, res: ServerResponse, urlPath: string, secure: boolean): Promise<void> => {
       const route = routes.get(`${req.method} ${urlPath}`);
@@ -291,6 +303,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       const urlPath = requestPath(req);
 
       const answer = async (): Promise<void> => {
+        // DNS rebinding: a page of a foreign name that resolves to this computer gets nothing, not even files.
+        if (!hosts.allows(hostName(req.headers.host))) throw new ApiError("request.host");
         if (urlPath === null) throw new ApiError("request.notFound");
         if (urlPath.startsWith("/api/")) return handleApi(req, res, urlPath, secure);
         const isRead = req.method === "GET" || req.method === "HEAD";
@@ -298,6 +312,10 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       };
 
       answer().catch((error: unknown) => {
+        if (error instanceof RequestAborted) {
+          res.destroy();
+          return;
+        }
         const failure = error instanceof ApiError ? error : new ApiError("server.error");
         if (!(error instanceof ApiError)) log(`error: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
         if (res.headersSent) {
@@ -327,12 +345,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   }
 
   const port = (server.address() as AddressInfo).port;
-  const shownHost = options.host === undefined || options.host === "0.0.0.0" || options.host === "::" ? "localhost" : options.host;
-  const origin = `http://${shownHost.includes(":") ? `[${shownHost}]` : shownHost}:${port}`;
-  const setupLink = setupToken === null ? null : `${origin}/#setup=${setupToken}`;
+  const { host } = options;
+  const links =
+    host === undefined || host === "0.0.0.0" || host === "::" ? siteLinks(port) : [`http://${host.includes(":") ? `[${host}]` : host}:${port}/`];
+  const setupLink = setupToken === null ? null : `${links[0]}#setup=${setupToken}`;
 
   if (created) log(`Создан файл настроек / Settings file created: ${path.join(options.dataDir, "settings.json")}`);
-  log(`battlemap: ${origin}/`);
+  log("battlemap открыт по адресам / battlemap is open at:");
+  for (const link of links) log(`  ${link}`);
   log("Внимание: сервер работает по HTTP, пароли идут по сети открытым текстом. Для доступа из интернета нужен HTTPS.");
   log("Warning: the server runs plain HTTP, passwords travel over the network unencrypted. Use HTTPS for access from the internet.");
   if (!existsSync(path.join(clientDir, "dist", "app.js"))) {

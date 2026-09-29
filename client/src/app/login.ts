@@ -43,11 +43,13 @@ export function button(key: Key, onPress: () => void, className = ""): HTMLButto
 
 /** Input attributes the forms use; every input is required. */
 interface InputOptions {
-  type?: "text" | "password";
+  type?: "text" | "password" | "number";
   name?: string;
   autocomplete?: AutoFill;
   value?: string;
   maxLength?: number;
+  min?: number;
+  max?: number;
   /** Logins are lowercase: phones should not capitalise the first letter. */
   noCapitals?: boolean;
 }
@@ -63,6 +65,8 @@ export function field(labelKey: Key, options: InputOptions, hint?: Key): { wrap:
   if (options.autocomplete) element.autocomplete = options.autocomplete;
   if (options.value) element.value = options.value;
   if (options.maxLength) element.maxLength = options.maxLength;
+  if (options.min !== undefined) element.min = String(options.min);
+  if (options.max !== undefined) element.max = String(options.max);
   if (options.noCapitals) element.autocapitalize = "none";
   wrap.append(labelled("span", labelKey), element);
   if (hint) wrap.append(labelled("small", hint, "hint"));

@@ -263,7 +263,8 @@ body {
 }
 
 input[type="text"],
-input[type="password"] {
+input[type="password"],
+input[type="number"] {
   font: inherit;
   color: var(--ui-fg);
   background: var(--ui-bg);
@@ -319,7 +320,7 @@ button.primary:hover:not(:disabled) {
   padding: 6px 8px;
   text-align: left;
   border-bottom: 1px solid var(--ui-border);
-  overflow-wrap: anywhere;
+  overflow-wrap: break-word;
 }
 
 .admin-table th {

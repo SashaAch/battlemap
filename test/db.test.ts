@@ -34,9 +34,9 @@ function inspect(): { version: number; schema: unknown[] } {
 }
 
 const TABLE_COLUMNS = {
-  users: ["id", "login", "display_name", "pass_hash", "pass_salt", "role", "must_change_password", "disabled", "settings_json", "created_at"],
+  users: ["id", "login", "display_name", "pass_hash", "pass_salt", "pass_params", "role", "must_change_password", "disabled", "settings_json", "created_at"],
   sessions: ["token_hash", "user_id", "expires_at"],
-  invites: ["code", "kind", "game_id", "created_by", "expires_at"],
+  invites: ["code_hash", "kind", "game_id", "created_by", "expires_at", "max_uses", "uses"],
 };
 
 describe("migrations", () => {
@@ -66,6 +66,7 @@ describe("migrations", () => {
       displayName: "Анна",
       passHash: new Uint8Array(64),
       passSalt: new Uint8Array(16),
+      passParams: "scrypt:32768:8:1",
       role: "user",
       mustChangePassword: false,
       createdAt: 1,
@@ -106,7 +107,7 @@ describe("migrations", () => {
 });
 
 describe("queries", () => {
-  test("invites are used once and not after they expire", () => {
+  test("an invite is used at most max_uses times and not after it expires", () => {
     const db = new Database(file);
     try {
       const admin = db.insertUser({
@@ -114,17 +115,23 @@ describe("queries", () => {
         displayName: "A",
         passHash: new Uint8Array(64),
         passSalt: new Uint8Array(16),
+        passParams: "scrypt:32768:8:1",
         role: "admin",
         mustChangePassword: false,
         createdAt: 0,
       });
-      db.insertInvite("fresh", "register", null, admin.id, 100);
-      db.insertInvite("stale", "register", null, admin.id, 10);
-      assert.equal(db.hasInvite("fresh", "register", 50), true);
-      assert.equal(db.hasInvite("fresh", "game", 50), false);
-      assert.equal(db.takeInvite("stale", "register", 50), false);
-      assert.equal(db.takeInvite("fresh", "register", 50), true);
-      assert.equal(db.takeInvite("fresh", "register", 50), false);
+      const [fresh, stale] = [1, 2].map((n) => new Uint8Array(32).fill(n));
+      db.insertInvite(fresh, "register", null, admin.id, 100, 2);
+      db.insertInvite(stale, "register", null, admin.id, 10, 5);
+      assert.equal(db.hasInvite(fresh, "register", 50), true);
+      assert.equal(db.hasInvite(fresh, "game", 50), false);
+      assert.equal(db.useInvite(stale, "register", 50), false);
+      assert.equal(db.useInvite(fresh, "register", 50), true);
+      assert.equal(db.useInvite(fresh, "register", 50), true);
+      assert.equal(db.hasInvite(fresh, "register", 50), false);
+      assert.equal(db.useInvite(fresh, "register", 50), false);
+      db.deleteExpired(50);
+      assert.equal(db.useInvite(stale, "register", 5), false, "expired invites are removed");
     } finally {
       db.close();
     }
@@ -138,6 +145,7 @@ describe("queries", () => {
         displayName: "A",
         passHash: new Uint8Array(64),
         passSalt: new Uint8Array(16),
+        passParams: "scrypt:32768:8:1",
         role: "user",
         mustChangePassword: false,
         createdAt: 0,

@@ -10,6 +10,11 @@ export interface Settings {
   port: number;
   /** Anyone may register without a code from an administrator (R18). */
   openRegistration: boolean;
+  /**
+   * Host names (besides localhost and the addresses of this computer) the site is opened by,
+   * e.g. a DNS name of the server. Requests with any other Host are refused (DNS rebinding).
+   */
+  allowedHosts: string[];
 }
 
 export class SettingsFile {
@@ -32,7 +37,7 @@ export class SettingsFile {
       text = await readFile(file, "utf8");
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-      const settings = new SettingsFile(file, { port: DEFAULT_PORT, openRegistration: false });
+      const settings = new SettingsFile(file, { port: DEFAULT_PORT, openRegistration: false, allowedHosts: [] });
       await settings.#write();
       return { settings, created: true };
     }
@@ -47,7 +52,7 @@ export class SettingsFile {
   }
 
   get current(): Settings {
-    return { ...this.#settings };
+    return { ...this.#settings, allowedHosts: [...this.#settings.allowedHosts] };
   }
 
   /** Changes are written one after another, so two at once cannot race on the temporary file. */
@@ -83,9 +88,13 @@ export class SettingsFile {
 function check(raw: Record<string, unknown>, file: string): Settings {
   const port = raw.port ?? DEFAULT_PORT;
   const openRegistration = raw.openRegistration ?? false;
+  const allowedHosts = raw.allowedHosts ?? [];
   if (typeof port !== "number" || !Number.isInteger(port) || port < 1 || port > 65535) {
     throw new Error(`${file}: "port" must be a whole number from 1 to 65535`);
   }
   if (typeof openRegistration !== "boolean") throw new Error(`${file}: "openRegistration" must be true or false`);
-  return { port, openRegistration };
+  if (!Array.isArray(allowedHosts) || !allowedHosts.every((host) => typeof host === "string" && host.trim() !== "")) {
+    throw new Error(`${file}: "allowedHosts" must be a list of host names`);
+  }
+  return { port, openRegistration, allowedHosts: allowedHosts.map((host: string) => host.trim().toLowerCase()) };
 }

@@ -27,7 +27,7 @@ export function requestPath(req: IncomingMessage): string | null {
   return query < 0 ? target : target.slice(0, query);
 }
 
-/** The request came from a page of this server: Origin equals the scheme and Host of the request. */
+/** The request came from a page of this server: Origin equals the scheme and Host of the request (a Host already allowed). */
 export function isSameOrigin(req: IncomingMessage, secure: boolean): boolean {
   const { origin, host } = req.headers;
   if (!origin || !host) return false;
@@ -38,6 +38,9 @@ export function isJsonRequest(req: IncomingMessage): boolean {
   const type = req.headers["content-type"];
   return type !== undefined && type.split(";")[0].trim().toLowerCase() === "application/json";
 }
+
+/** The client closed the connection before sending the whole body: nothing to answer, not a server error. */
+export class RequestAborted extends Error {}
 
 /** The client declared a body that has not been read to the end. */
 export function hasUnreadBody(req: IncomingMessage): boolean {
@@ -77,7 +80,7 @@ export function readBody(req: IncomingMessage, limit: number): Promise<Buffer> {
     };
     const onFailure = (): void => {
       stop();
-      reject(new Error("the request ended before its body"));
+      reject(new RequestAborted("the client closed the request before its body ended"));
     };
     req.on("data", onData);
     req.on("end", onEnd);

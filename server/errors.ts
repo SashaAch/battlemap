@@ -3,6 +3,7 @@
 
 export const ERRORS = {
   "request.notFound": 404,
+  "request.host": 403,
   "request.origin": 403,
   "request.contentType": 415,
   "request.tooLarge": 413,
@@ -10,6 +11,7 @@ export const ERRORS = {
   "auth.required": 401,
   "auth.invalid": 401,
   "auth.tooManyAttempts": 429,
+  "auth.tooManyRegistrations": 429,
   "auth.disabled": 403,
   "auth.mustChangePassword": 403,
   "auth.forbidden": 403,

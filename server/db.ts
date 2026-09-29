@@ -13,6 +13,7 @@ export const MIGRATIONS: readonly string[] = [
     display_name TEXT NOT NULL,
     pass_hash BLOB NOT NULL,
     pass_salt BLOB NOT NULL,
+    pass_params TEXT NOT NULL,
     role TEXT NOT NULL CHECK (role IN ('admin', 'user')),
     must_change_password INTEGER NOT NULL DEFAULT 0 CHECK (must_change_password IN (0, 1)),
     disabled INTEGER NOT NULL DEFAULT 0 CHECK (disabled IN (0, 1)),
@@ -28,11 +29,13 @@ export const MIGRATIONS: readonly string[] = [
   CREATE INDEX sessions_by_user ON sessions (user_id);
 
   CREATE TABLE invites (
-    code TEXT PRIMARY KEY,
+    code_hash BLOB PRIMARY KEY,
     kind TEXT NOT NULL CHECK (kind IN ('register', 'game')),
     game_id INTEGER,
     created_by INTEGER NOT NULL REFERENCES users (id),
-    expires_at INTEGER NOT NULL
+    expires_at INTEGER NOT NULL,
+    max_uses INTEGER NOT NULL CHECK (max_uses >= 1),
+    uses INTEGER NOT NULL DEFAULT 0 CHECK (uses >= 0)
   ) STRICT;
   `,
 ];
@@ -65,6 +68,8 @@ export interface User {
   displayName: string;
   passHash: Uint8Array;
   passSalt: Uint8Array;
+  /** How pass_hash was made, e.g. `scrypt:32768:8:1` (auth.ts), so the cost can be raised later. */
+  passParams: string;
   role: Role;
   mustChangePassword: boolean;
   disabled: boolean;
@@ -73,11 +78,17 @@ export interface User {
   createdAt: number;
 }
 
-export interface NewUser {
-  login: string;
-  displayName: string;
+/** A password as kept in the database: never the password itself. */
+export interface StoredPassword {
   passHash: Uint8Array;
   passSalt: Uint8Array;
+  /** How pass_hash was made, e.g. `scrypt:32768:8:1` (auth.ts), so the cost can be raised later. */
+  passParams: string;
+}
+
+export interface NewUser extends StoredPassword {
+  login: string;
+  displayName: string;
   role: Role;
   mustChangePassword: boolean;
   createdAt: number;
@@ -97,6 +108,7 @@ function toUser(row: Row): User {
     displayName: String(row.display_name),
     passHash: row.pass_hash as Uint8Array,
     passSalt: row.pass_salt as Uint8Array,
+    passParams: String(row.pass_params),
     role: row.role === "admin" ? "admin" : "user",
     mustChangePassword: row.must_change_password === 1,
     disabled: row.disabled === 1,
@@ -182,12 +194,13 @@ export class Database {
 
   insertUser(user: NewUser): User {
     const row = this.#get(
-      `INSERT INTO users (login, display_name, pass_hash, pass_salt, role, must_change_password, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?) RETURNING *`,
+      `INSERT INTO users (login, display_name, pass_hash, pass_salt, pass_params, role, must_change_password, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?) RETURNING *`,
       user.login,
       user.displayName,
       user.passHash,
       user.passSalt,
+      user.passParams,
       user.role,
       flag(user.mustChangePassword),
       user.createdAt,
@@ -196,14 +209,19 @@ export class Database {
     return toUser(row);
   }
 
-  setPassword(id: number, passHash: Uint8Array, passSalt: Uint8Array, mustChangePassword: boolean): void {
+  setPassword(id: number, password: StoredPassword, mustChangePassword: boolean): void {
     this.#run(
-      "UPDATE users SET pass_hash = ?, pass_salt = ?, must_change_password = ? WHERE id = ?",
-      passHash,
-      passSalt,
+      "UPDATE users SET pass_hash = ?, pass_salt = ?, pass_params = ?, must_change_password = ? WHERE id = ?",
+      password.passHash,
+      password.passSalt,
+      password.passParams,
       flag(mustChangePassword),
       id,
     );
+  }
+
+  setRole(id: number, role: Role): void {
+    this.#run("UPDATE users SET role = ? WHERE id = ?", role, id);
   }
 
   setDisabled(id: number, disabled: boolean): void {
@@ -239,31 +257,45 @@ export class Database {
     else this.#run("DELETE FROM sessions WHERE user_id = ?", userId);
   }
 
-  // ---- invites ----
+  // ---- invites: only the SHA-256 of the code is stored ----
 
-  insertInvite(code: string, kind: InviteKind, gameId: number | null, createdBy: number, expiresAt: number): void {
+  insertInvite(codeHash: Uint8Array, kind: InviteKind, gameId: number | null, createdBy: number, expiresAt: number, maxUses: number): void {
     this.#run(
-      "INSERT INTO invites (code, kind, game_id, created_by, expires_at) VALUES (?, ?, ?, ?, ?)",
-      code,
+      "INSERT INTO invites (code_hash, kind, game_id, created_by, expires_at, max_uses) VALUES (?, ?, ?, ?, ?, ?)",
+      codeHash,
       kind,
       gameId,
       createdBy,
       expiresAt,
+      maxUses,
     );
   }
 
-  hasInvite(code: string, kind: InviteKind, now: number): boolean {
-    return this.#get("SELECT 1 AS found FROM invites WHERE code = ? AND kind = ? AND expires_at > ?", code, kind, now) !== undefined;
+  /** The invite exists, has not expired and has uses left. */
+  hasInvite(codeHash: Uint8Array, kind: InviteKind, now: number): boolean {
+    const row = this.#get(
+      "SELECT 1 AS found FROM invites WHERE code_hash = ? AND kind = ? AND expires_at > ? AND uses < max_uses",
+      codeHash,
+      kind,
+      now,
+    );
+    return row !== undefined;
   }
 
-  /** Uses up an unexpired invite; false when there is no such invite. */
-  takeInvite(code: string, kind: InviteKind, now: number): boolean {
-    return this.#run("DELETE FROM invites WHERE code = ? AND kind = ? AND expires_at > ?", code, kind, now) === 1;
+  /** Uses the invite once, in one statement, so parallel requests never exceed max_uses; false when it cannot be used. */
+  useInvite(codeHash: Uint8Array, kind: InviteKind, now: number): boolean {
+    const changed = this.#run(
+      "UPDATE invites SET uses = uses + 1 WHERE code_hash = ? AND kind = ? AND expires_at > ? AND uses < max_uses",
+      codeHash,
+      kind,
+      now,
+    );
+    return changed === 1;
   }
 
-  /** Drops expired sessions and invites. */
+  /** Drops expired sessions and invites, and invites with no uses left. */
   deleteExpired(now: number): void {
     this.#run("DELETE FROM sessions WHERE expires_at <= ?", now);
-    this.#run("DELETE FROM invites WHERE expires_at <= ?", now);
+    this.#run("DELETE FROM invites WHERE expires_at <= ? OR uses >= max_uses", now);
   }
 }

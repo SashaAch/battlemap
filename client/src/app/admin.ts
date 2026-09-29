@@ -94,6 +94,11 @@ export function showAdmin(screen: HTMLElement, me: Me, actions: AdminActions): v
                 request("POST", "api/admin/users", { action: "setDisabled", id: user.id, disabled: !user.disabled }).then(loadUsers),
               );
             }),
+            button(user.role === "admin" ? "admin.makeUser" : "admin.makeAdmin", () => {
+              const next = user.role === "admin" ? "user" : "admin";
+              if (!confirm(t(next === "admin" ? "admin.confirmMakeAdmin" : "admin.confirmMakeUser", { login: user.login }))) return;
+              run(request("POST", "api/admin/users", { action: "setRole", id: user.id, role: next }).then(loadUsers));
+            }),
           );
         }
         row.append(...cells, role, state, buttons);
@@ -159,12 +164,27 @@ export function showAdmin(screen: HTMLElement, me: Me, actions: AdminActions): v
     );
   });
 
-  const inviteButton = button("admin.createInvite", () => {
+  // A code for several registrations within some days (R38); it is shown only once, the server keeps its hash.
+  const invite = document.createElement("form");
+  invite.className = "inline-form";
+  const uses = field("admin.inviteUses", { type: "number", value: "1", min: 1, max: 1000 });
+  const days = field("admin.inviteDays", { type: "number", value: "7", min: 1, max: 365 });
+  const inviteButton = labelled("button", "admin.createInvite", "primary");
+  inviteButton.type = "submit";
+  invite.append(uses.wrap, days.wrap, inviteButton);
+  invite.addEventListener("submit", (event) => {
+    event.preventDefault();
     run(
-      request<{ code: string; expiresAt: number }>("POST", "api/admin/invites").then((reply) => {
+      request<{ code: string; expiresAt: number; maxUses: number }>("POST", "api/admin/invites", {
+        maxUses: Number(uses.input.value),
+        days: Number(days.input.value),
+      }).then((reply) => {
         const link = `${location.origin}${location.pathname}#register=${reply.code}`;
         const until = new Date(reply.expiresAt).toLocaleString(getLang());
-        result.replaceChildren(secretLine("admin.inviteCode", { until }, reply.code), secretLine("admin.inviteLink", {}, link));
+        result.replaceChildren(
+          secretLine("admin.inviteCode", { uses: String(reply.maxUses), until }, reply.code),
+          secretLine("admin.inviteLink", {}, link),
+        );
       }),
     );
   });
@@ -175,7 +195,7 @@ export function showAdmin(screen: HTMLElement, me: Me, actions: AdminActions): v
   const tableWrap = document.createElement("div");
   tableWrap.className = "table-wrap";
   tableWrap.append(table);
-  panel.append(header, errors.element, result, usersTitle, tableWrap, createTitle, create, registrationTitle, openWrap, inviteButton);
+  panel.append(header, errors.element, result, usersTitle, tableWrap, createTitle, create, registrationTitle, openWrap, invite);
   screen.append(panel);
 
   run(loadUsers());

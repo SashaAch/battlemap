@@ -1,7 +1,7 @@
-// Accounts, passwords, sessions and the limit on password guessing (plan 5.10, 6.2, R11, R18).
+// Accounts, sessions, registration and the limits on password guessing (plan 5.10, 6.2, R11, R18, R38, R39).
 // Knows nothing about HTTP: the routes in app.ts pass values in and turn ApiError into a response.
 
-import { createHash, randomBytes, scrypt, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { isLang } from "../client/src/i18n/index.ts";
 import type { LANGS } from "../client/src/i18n/index.ts";
@@ -9,22 +9,29 @@ import { isThemeChoice } from "../client/src/theme.ts";
 import type { THEME_CHOICES } from "../client/src/theme.ts";
 import type { Database, Role, User } from "./db.ts";
 import { ApiError } from "./errors.ts";
+import { addressKey, AttemptLimiter } from "./limits.ts";
+import { decoyPassword, hashPassword, isCurrent, passwordMatches } from "./passwords.ts";
 
 const MINUTE_MS = 60 * 1000;
-const DAY_MS = 24 * 60 * MINUTE_MS;
+export const DAY_MS = 24 * 60 * MINUTE_MS;
 
 export const SESSION_COOKIE = "bm_session";
 export const SESSION_LIFETIME_MS = 30 * DAY_MS;
 /** The expiry moves forward at most once a day, so an ordinary request does not write to the database. */
 const SESSION_EXTEND_STEP_MS = DAY_MS;
 
-export const LOGIN_WINDOW_MS = 15 * MINUTE_MS;
-export const LOGIN_MAX_FAILURES = 10;
+/** Failed password checks (sign-in and the current password when changing it), R39. */
+export const LIMIT_WINDOW_MS = 15 * MINUTE_MS;
+export const MAX_FAILURES_PER_ADDRESS = 10;
+export const MAX_FAILURES_PER_LOGIN_AND_ADDRESS = 10;
+export const MAX_FAILURES_PER_LOGIN = 100;
+/** Registrations with a code or open registration, successful or not, per address in LIMIT_WINDOW_MS. */
+export const MAX_REGISTRATIONS_PER_ADDRESS = 10;
 
-export const INVITE_LIFETIME_MS = 7 * DAY_MS;
+/** Bounds an administrator can give a registration code (R38). */
+export const INVITE_MAX_USES = 1000;
+export const INVITE_MAX_DAYS = 365;
 
-const SALT_BYTES = 16;
-const HASH_BYTES = 64;
 const TOKEN_BYTES = 32;
 /** base64url of TOKEN_BYTES bytes, without padding. */
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
@@ -41,93 +48,37 @@ const CONTROL_CHARACTER = /\p{Cc}/u;
 
 const length = (text: string): number => [...text].length;
 
-export function checkLogin(value: string): string {
+function checkLogin(value: string): string {
   if (!LOGIN_PATTERN.test(value)) throw new ApiError("login.format");
   return value;
 }
 
 /** Up to 40 characters after trimming, not empty, no control characters. */
-export function checkDisplayName(value: string): string {
+function checkDisplayName(value: string): string {
   const name = value.trim();
   if (name === "" || length(name) > 40 || CONTROL_CHARACTER.test(name)) throw new ApiError("name.format");
   return name;
 }
 
-export function checkPassword(value: string): string {
+function checkPassword(value: string): string {
   const size = length(value);
   if (size < 8 || size > 200) throw new ApiError("password.format");
   return value;
 }
 
+function checkWhole(value: number, max: number): number {
+  if (!Number.isSafeInteger(value) || value < 1 || value > max) throw new ApiError("request.format");
+  return value;
+}
+
 // ---- secrets ----
 
-export function hashPassword(password: string, salt: Uint8Array): Promise<Buffer> {
-  // Asynchronous: scrypt runs in the thread pool and does not stop other requests.
-  return new Promise((resolve, reject) => {
-    scrypt(password.normalize("NFC"), salt, HASH_BYTES, (error, key) => (error ? reject(error) : resolve(key)));
-  });
-}
-
-async function passwordMatches(password: string, salt: Uint8Array, expected: Uint8Array): Promise<boolean> {
-  const actual = await hashPassword(password, salt);
-  return actual.length === expected.length && timingSafeEqual(actual, expected);
-}
-
+/** Session tokens, registration codes and the setup token are kept only as this hash. */
 const sha256 = (text: string): Buffer => createHash("sha256").update(text).digest();
-
-/** Compares two secrets in time that does not depend on where they differ. */
-function sameSecret(a: string, b: string): boolean {
-  return timingSafeEqual(sha256(a), sha256(b));
-}
 
 function readableText(size: number): string {
   // 256 is a multiple of 32, so taking the low 5 bits of each byte is uniform.
   return [...randomBytes(size)].map((byte) => READABLE[byte & 31]).join("");
-}
-
-// ---- limit on failed attempts ----
-
-/** Counts failures per key in a sliding window. Attempts are booked before the slow password check. */
-export class AttemptLimiter {
-  readonly #max: number;
-  readonly #windowMs: number;
-  readonly #failures = new Map<string, number[]>();
-
-  constructor(max: number, windowMs: number) {
-    this.#max = max;
-    this.#windowMs = windowMs;
-  }
-
-  /**
-   * Books an attempt as a failure; false when the key already has `max` failures in the window.
-   * Booking first means parallel requests cannot all pass the check before any of them fails.
-   */
-  take(key: string, now: number): boolean {
-    if (this.#failures.size > 10_000) this.#sweep(now);
-    const recent = (this.#failures.get(key) ?? []).filter((time) => time > now - this.#windowMs);
-    if (recent.length >= this.#max) {
-      this.#failures.set(key, recent);
-      return false;
-    }
-    recent.push(now);
-    this.#failures.set(key, recent);
-    return true;
-  }
-
-  /** Takes back an attempt booked at `time` that turned out not to be a failure. */
-  giveBack(key: string, time: number): void {
-    const list = this.#failures.get(key);
-    const index = list ? list.indexOf(time) : -1;
-    if (!list || index < 0) return;
-    list.splice(index, 1);
-    if (list.length === 0) this.#failures.delete(key);
-  }
-
-  #sweep(now: number): void {
-    for (const [key, list] of this.#failures) {
-      if (list.every((time) => time <= now - this.#windowMs)) this.#failures.delete(key);
-    }
-  }
 }
 
 // ---- account settings (plan 5.15) ----
@@ -208,10 +159,13 @@ export interface Registration {
 export class Accounts {
   readonly #db: Database;
   readonly #now: () => number;
-  readonly #limiter = new AttemptLimiter(LOGIN_MAX_FAILURES, LOGIN_WINDOW_MS);
-  /** A random password nobody knows: checked against when the login does not exist, so both cases take as long. */
-  readonly #decoy = { salt: randomBytes(SALT_BYTES), hash: randomBytes(HASH_BYTES) };
-  #setupToken: string | null = null;
+  readonly #failuresByAddress = new AttemptLimiter(MAX_FAILURES_PER_ADDRESS, LIMIT_WINDOW_MS);
+  readonly #failuresByLoginAndAddress = new AttemptLimiter(MAX_FAILURES_PER_LOGIN_AND_ADDRESS, LIMIT_WINDOW_MS);
+  readonly #failuresByLogin = new AttemptLimiter(MAX_FAILURES_PER_LOGIN, LIMIT_WINDOW_MS);
+  readonly #registrations = new AttemptLimiter(MAX_REGISTRATIONS_PER_ADDRESS, LIMIT_WINDOW_MS);
+  readonly #decoy = decoyPassword();
+  /** SHA-256 of the one-time setup token; the token itself is only printed. */
+  #setupHash: Buffer | null = null;
 
   constructor(db: Database, now: () => number) {
     this.#db = db;
@@ -220,15 +174,20 @@ export class Accounts {
 
   /**
    * With no users in the database, makes the one-time token for creating the first administrator.
-   * It lives in memory only, until it is used or the server restarts. Null when users exist.
+   * It lives in memory (as a hash) until it is used or the server restarts. Null when users exist.
    */
   startSetup(): string | null {
-    this.#setupToken = this.#db.countUsers() === 0 ? randomBytes(TOKEN_BYTES).toString("base64url") : null;
-    return this.#setupToken;
+    if (this.#db.countUsers() > 0) {
+      this.#setupHash = null;
+      return null;
+    }
+    const token = randomBytes(TOKEN_BYTES).toString("base64url");
+    this.#setupHash = sha256(token);
+    return token;
   }
 
   #setupMatches(token: string): boolean {
-    return this.#setupToken !== null && sameSecret(token, this.#setupToken) && this.#db.countUsers() === 0;
+    return this.#setupHash !== null && timingSafeEqual(sha256(token), this.#setupHash) && this.#db.countUsers() === 0;
   }
 
   /** Registration without a code: open registration is on, and the first administrator exists (until then only the setup link registers). */
@@ -236,44 +195,46 @@ export class Accounts {
     return openRegistration && this.#db.countUsers() > 0;
   }
 
-  async register(input: Registration, openRegistration: boolean): Promise<SignedIn> {
+  async register(input: Registration, openRegistration: boolean, address: string): Promise<SignedIn> {
+    const { setup, code } = input;
+    const now = this.#now();
+    // Every registration by code or open registration counts, successful or not.
+    if (setup === undefined && !this.#registrations.take(addressKey(address), now)) {
+      throw new ApiError("auth.tooManyRegistrations");
+    }
     const login = checkLogin(input.login);
     const displayName = checkDisplayName(input.displayName);
     const password = checkPassword(input.password);
-    const now = this.#now();
 
-    const { setup, code } = input;
-    const asAdmin = setup !== undefined;
-    const needsInvite = !asAdmin && !this.registrationOpen(openRegistration);
-    const allowed = (): boolean =>
-      setup !== undefined
-        ? this.#setupMatches(setup)
-        : !needsInvite || (code !== undefined && this.#db.hasInvite(code, "register", now));
-    const refusal = asAdmin ? "auth.setupInvalid" : "auth.inviteInvalid";
+    const needsInvite = setup === undefined && !this.registrationOpen(openRegistration);
+    const codeHash = code === undefined ? null : sha256(code);
+    const refusal = setup !== undefined ? "auth.setupInvalid" : "auth.inviteInvalid";
+    const allowed = (): boolean => {
+      if (setup !== undefined) return this.#setupMatches(setup);
+      return !needsInvite || (codeHash !== null && this.#db.hasInvite(codeHash, "register", now));
+    };
 
-    // The invite is checked before the login, so without one nobody learns which logins exist.
+    // The code is checked before the login, so without one nobody learns which logins exist.
     if (!allowed()) throw new ApiError(refusal);
     if (this.#db.findUserByLogin(login)) throw new ApiError("login.taken");
 
-    const salt = randomBytes(SALT_BYTES);
-    const hash = await hashPassword(password, salt);
+    const stored = await hashPassword(password);
 
-    // Checked again: other requests ran while the password was hashed.
+    // Checked again in one transaction: other requests ran while the password was hashed.
     const user = this.#db.transaction(() => {
       if (!allowed()) throw new ApiError(refusal);
       if (this.#db.findUserByLogin(login)) throw new ApiError("login.taken");
-      if (needsInvite && code !== undefined) this.#db.takeInvite(code, "register", now);
+      if (needsInvite && (codeHash === null || !this.#db.useInvite(codeHash, "register", now))) throw new ApiError(refusal);
       return this.#db.insertUser({
         login,
         displayName,
-        passHash: hash,
-        passSalt: salt,
-        role: asAdmin ? "admin" : "user",
+        ...stored,
+        role: setup !== undefined ? "admin" : "user",
         mustChangePassword: false,
         createdAt: now,
       });
     });
-    if (asAdmin) this.#setupToken = null;
+    if (setup !== undefined) this.#setupHash = null;
     return { user, token: this.#newSession(user, now) };
   }
 
@@ -285,27 +246,30 @@ export class Accounts {
   }
 
   /**
-   * Checks a password under the limit of LOGIN_MAX_FAILURES per LOGIN_WINDOW_MS, separately for the address
-   * and for the login. A failure throws `failure`; over the limit, `auth.tooManyAttempts`, even for the right password.
+   * Checks a password under the limits of R39: failures per address, per login and address, and per login
+   * from all addresses. A failure throws `failure`; over a limit, `auth.tooManyAttempts`, even for the right password.
    */
   async #checkPassword(login: string, password: string, address: string, failure: "auth.invalid" | "password.wrong"): Promise<User> {
     const now = this.#now();
-    const keys = [`address:${address}`];
+    const net = addressKey(address);
+    const limits: [AttemptLimiter, string][] = [[this.#failuresByAddress, net]];
     // A malformed login cannot exist, and keeping it would let anyone fill memory with junk keys.
-    if (LOGIN_PATTERN.test(login)) keys.push(`login:${login}`);
-    const booked: string[] = [];
-    for (const key of keys) {
-      if (!this.#limiter.take(key, now)) {
-        for (const done of booked) this.#limiter.giveBack(done, now);
+    const wellFormed = LOGIN_PATTERN.test(login);
+    if (wellFormed) limits.push([this.#failuresByLoginAndAddress, `${login} ${net}`], [this.#failuresByLogin, login]);
+    const booked: [AttemptLimiter, string][] = [];
+    for (const [limiter, key] of limits) {
+      if (!limiter.take(key, now)) {
+        for (const [done, doneKey] of booked) done.giveBack(doneKey, now);
         throw new ApiError("auth.tooManyAttempts");
       }
-      booked.push(key);
+      booked.push([limiter, key]);
     }
 
-    const user = booked.length > 1 ? this.#db.findUserByLogin(login) : undefined;
-    const matches = await passwordMatches(password, user?.passSalt ?? this.#decoy.salt, user?.passHash ?? this.#decoy.hash);
+    const user = wellFormed ? this.#db.findUserByLogin(login) : undefined;
+    const matches = await passwordMatches(password, user ?? this.#decoy);
     if (!user || !matches) throw new ApiError(failure);
-    for (const key of booked) this.#limiter.giveBack(key, now);
+    for (const [limiter, key] of booked) limiter.giveBack(key, now);
+    if (!isCurrent(user)) this.#db.setPassword(user.id, await hashPassword(password), user.mustChangePassword);
     return user;
   }
 
@@ -336,15 +300,14 @@ export class Accounts {
     this.#db.deleteSession(auth.tokenHash);
   }
 
-  /** Needs the current password; ends every other session of the user. */
+  /** Needs the current password (under the same limits as sign-in); ends every other session of the user. */
   async changePassword(auth: Authenticated, current: string, next: string, address: string): Promise<User> {
     checkPassword(next);
     if (current === next) throw new ApiError("password.same");
     const user = await this.#checkPassword(auth.user.login, current, address, "password.wrong");
-    const salt = randomBytes(SALT_BYTES);
-    const hash = await hashPassword(next, salt);
+    const stored = await hashPassword(next);
     this.#db.transaction(() => {
-      this.#db.setPassword(user.id, hash, salt, false);
+      this.#db.setPassword(user.id, stored, false);
       this.#db.deleteUserSessions(user.id, auth.tokenHash);
     });
     return this.#existing(user.id);
@@ -368,19 +331,10 @@ export class Accounts {
     const displayName = checkDisplayName(displayNameInput);
     if (this.#db.findUserByLogin(login)) throw new ApiError("login.taken");
     const password = readableText(TEMPORARY_PASSWORD_LENGTH);
-    const salt = randomBytes(SALT_BYTES);
-    const hash = await hashPassword(password, salt);
+    const stored = await hashPassword(password);
     const user = this.#db.transaction(() => {
       if (this.#db.findUserByLogin(login)) throw new ApiError("login.taken");
-      return this.#db.insertUser({
-        login,
-        displayName,
-        passHash: hash,
-        passSalt: salt,
-        role,
-        mustChangePassword: true,
-        createdAt: this.#now(),
-      });
+      return this.#db.insertUser({ login, displayName, ...stored, role, mustChangePassword: true, createdAt: this.#now() });
     });
     return { user, password };
   }
@@ -389,11 +343,10 @@ export class Accounts {
   async resetPassword(admin: User, id: number): Promise<{ user: User; password: string }> {
     this.#other(admin, id);
     const password = readableText(TEMPORARY_PASSWORD_LENGTH);
-    const salt = randomBytes(SALT_BYTES);
-    const hash = await hashPassword(password, salt);
+    const stored = await hashPassword(password);
     this.#db.transaction(() => {
       this.#existing(id);
-      this.#db.setPassword(id, hash, salt, true);
+      this.#db.setPassword(id, stored, true);
       this.#db.deleteUserSessions(id);
     });
     return { user: this.#existing(id), password };
@@ -409,11 +362,21 @@ export class Accounts {
     return this.#existing(id);
   }
 
-  createInvite(admin: User): { code: string; expiresAt: number } {
+  /** Makes another user an administrator or takes the role away (R38); the role is read on every request. */
+  setRole(admin: User, id: number, role: Role): User {
+    this.#other(admin, id);
+    this.#db.setRole(id, role);
+    return this.#existing(id);
+  }
+
+  /** A registration code for `maxUses` registrations within `days` days (R38). Only its hash is stored. */
+  createInvite(admin: User, maxUses: number, days: number): { code: string; expiresAt: number; maxUses: number } {
+    checkWhole(maxUses, INVITE_MAX_USES);
+    checkWhole(days, INVITE_MAX_DAYS);
     const code = readableText(INVITE_CODE_LENGTH);
-    const expiresAt = this.#now() + INVITE_LIFETIME_MS;
-    this.#db.insertInvite(code, "register", null, admin.id, expiresAt);
-    return { code, expiresAt };
+    const expiresAt = this.#now() + days * DAY_MS;
+    this.#db.insertInvite(sha256(code), "register", null, admin.id, expiresAt, maxUses);
+    return { code, expiresAt, maxUses };
   }
 
   #existing(id: number): User {
@@ -422,7 +385,7 @@ export class Accounts {
     return user;
   }
 
-  /** An administrator does not lock themselves out: their own account is not reset or disabled here. */
+  /** An administrator does not lock themselves out: their own account is not reset, disabled or demoted here. */
   #other(admin: User, id: number): void {
     if (id === admin.id) throw new ApiError("admin.self");
     this.#existing(id);
