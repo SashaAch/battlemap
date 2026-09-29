@@ -374,6 +374,26 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games, st
       },
     ],
     [
+      "GET /api/games/:id/invites",
+      {
+        access: "user",
+        handle(call) {
+          return { status: 200, body: { invites: games.listInvites(user(call), gameId(call)) } };
+        },
+      },
+    ],
+    [
+      "DELETE /api/games/:id/invites/:inviteId",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          games.revokeInvite(user(call), gameId(call), idParam(call, "inviteId"));
+          return { status: 204 };
+        },
+      },
+    ],
+    [
       "POST /api/join/:code",
       {
         access: "user",

@@ -507,13 +507,24 @@ export class Database {
     return this.#run("DELETE FROM invites WHERE id = ?", id) === 1;
   }
 
-  /** The codes of both kinds that are not expired and have uses left, newest first (R50). */
-  listActiveInvites(now: number): ActiveInvite[] {
+  /** Deletes one invite of this game by its id (R52); false when the game has none with that id. */
+  deleteGameInvite(gameId: number, id: number): boolean {
+    return this.#run("DELETE FROM invites WHERE id = ? AND kind = 'game' AND game_id = ?", id, gameId) === 1;
+  }
+
+  /**
+   * The codes that are not expired and have uses left, newest first: of both kinds (R50), or only the invites of
+   * one game when `gameId` is given (R52).
+   */
+  listActiveInvites(now: number, gameId: number | null = null): ActiveInvite[] {
     return this.#all(
       `SELECT invites.id, invites.kind, users.display_name, games.title, invites.max_uses - invites.uses AS uses_left, invites.expires_at
        FROM invites JOIN users ON users.id = invites.created_by LEFT JOIN games ON games.id = invites.game_id
-       WHERE invites.expires_at > ? AND invites.uses < invites.max_uses ORDER BY invites.id DESC`,
+       WHERE invites.expires_at > ? AND invites.uses < invites.max_uses AND (? IS NULL OR (invites.kind = 'game' AND invites.game_id = ?))
+       ORDER BY invites.id DESC`,
       now,
+      gameId,
+      gameId,
     ).map((row) => ({
       id: Number(row.id),
       kind: row.kind === "game" ? "game" : "register",

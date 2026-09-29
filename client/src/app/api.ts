@@ -116,6 +116,14 @@ export interface GameInvite {
   links: InviteLink[];
 }
 
+/** An invite of a game that still lets someone in, in its editor's list (R52); never the code. */
+export interface ActiveGameInvite {
+  id: number;
+  creatorName: string;
+  usesLeft: number;
+  expiresAt: number;
+}
+
 export interface SceneData extends SceneSummary {
   /** The scene (plan 6.1), not yet checked. */
   scene: unknown;

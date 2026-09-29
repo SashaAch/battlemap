@@ -308,6 +308,21 @@ export class Games {
   }
 
   /**
+   * The invites of the game that still let someone in, for its editor (R52), with the rights of making one: newest
+   * first, without the code (only its hash is stored), without the expired and the used-up ones.
+   */
+  listInvites(user: User, gameId: number): { id: number; creatorName: string; usesLeft: number; expiresAt: number }[] {
+    const { game } = this.#editor(user, gameId);
+    return this.#db.listActiveInvites(this.#now(), game.id).map(({ id, creatorName, usesLeft, expiresAt }) => ({ id, creatorName, usesLeft, expiresAt }));
+  }
+
+  /** The editor revokes an invite of the game (R52); an invite of another game, or none, is `invite.notFound`. */
+  revokeInvite(user: User, gameId: number, inviteId: number): void {
+    const { game } = this.#editor(user, gameId);
+    if (!this.#db.deleteGameInvite(game.id, inviteId)) throw new ApiError("invite.notFound");
+  }
+
+  /**
    * Joins the game of an invite as a player. A member of that game who opens the link again (on another device,
    * say) gets 200 with any code of the game that is still stored, even a used-up or expired one: nothing is used
    * up, it is no failure, and it gives nothing away, since the member knows the game. For anyone else an unknown

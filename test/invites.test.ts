@@ -466,6 +466,105 @@ describe("the administrator's list of codes and revoking (R50)", () => {
   });
 });
 
+describe("the master's list of the game's invites and revoking (R52)", () => {
+  const listOf = async (site: Site, gameId: number, person: Person): Promise<any[]> => {
+    const reply = await call(site, "GET", `/api/games/${gameId}/invites`, person.cookie);
+    assert.equal(reply.status, 200);
+    return reply.body.invites;
+  };
+
+  test("the list has the game's active invites with uses left, expiry and creator; no code, no hash, nothing expired, used up or of another game", async () => {
+    const { site, users } = await siteWith("master", "pat", "kim");
+    const start = site.clock.now;
+    const { gameId } = await gameOf(site, users.master);
+    const stale = await invite(site, gameId, users.master, 5, 1);
+    site.clock.now += DAY_MS;
+    const usedUp = await invite(site, gameId, users.master, 1, 3);
+    assert.equal((await call(site, "POST", `/api/join/${usedUp}`, users.pat.cookie)).status, 200);
+    const partly = await invite(site, gameId, users.master, 3, 2);
+    assert.equal((await call(site, "POST", `/api/join/${partly}`, users.kim.cookie)).status, 200);
+    const fresh = await invite(site, gameId, users.master, 4, 5);
+    const other = await invite(site, (await gameOf(site, users.admin)).gameId, users.admin);
+    await call(site, "POST", "/api/admin/invites", users.admin.cookie, { maxUses: 1, days: 1 });
+
+    const list = await listOf(site, gameId, users.master);
+    assert.deepEqual(
+      list.map(({ id, ...rest }) => {
+        assert.ok(Number.isSafeInteger(id) && id > 0);
+        return rest;
+      }),
+      [
+        { creatorName: "MASTER", usesLeft: 4, expiresAt: start + 6 * DAY_MS },
+        { creatorName: "MASTER", usesLeft: 2, expiresAt: start + 3 * DAY_MS },
+      ],
+    );
+    const text = JSON.stringify(list);
+    for (const code of [stale, usedUp, partly, fresh, other]) {
+      assert.equal(text.includes(code), false);
+      assert.equal(text.includes(sha256(code).toString("hex")), false);
+      assert.equal(text.includes(sha256(code).toString("base64")), false);
+    }
+  });
+
+  test("the owner of a personal campaign without a master lists and revokes its invites", async () => {
+    const { site, users } = await siteWith("pat");
+    const campaign = await call(site, "POST", "/api/games", users.pat.cookie, { title: "Моя", kind: "personal" });
+    const gameId: number = campaign.body.id;
+    const code = await invite(site, gameId, users.pat);
+    const [entry] = await listOf(site, gameId, users.pat);
+    assert.equal(entry.creatorName, "PAT");
+    assert.equal((await call(site, "DELETE", `/api/games/${gameId}/invites/${entry.id}`, users.pat.cookie)).status, 204);
+    assertError(await call(site, "POST", `/api/join/${code}`, users.admin.cookie), "invite.notFound");
+  });
+
+  test("revoking deletes the invite: 204, it lets nobody in, revoking again, an unknown id or another game's invite is 404", async () => {
+    const { site, users } = await siteWith("master", "pat");
+    const { gameId } = await gameOf(site, users.master);
+    const code = await invite(site, gameId, users.master);
+    const otherGame = (await gameOf(site, users.admin)).gameId;
+    const otherCode = await invite(site, otherGame, users.admin);
+    const [entry] = await listOf(site, gameId, users.master);
+    const [otherEntry] = await listOf(site, otherGame, users.admin);
+    const revoke = (id: number) => call(site, "DELETE", `/api/games/${gameId}/invites/${id}`, users.master.cookie);
+
+    assertError(await revoke(otherEntry.id), "invite.notFound");
+    assertError(await revoke(999), "invite.notFound");
+    assert.equal((await call(site, "POST", `/api/join/${otherCode}`, users.pat.cookie)).status, 200, "the other game's invite still works");
+
+    assert.deepEqual(await revoke(entry.id), { status: 204, body: undefined });
+    assertError(await call(site, "POST", `/api/join/${code}`, users.admin.cookie), "invite.notFound");
+    assert.deepEqual(await memberIds(site, gameId, users.master), [users.master.id]);
+    assert.deepEqual(await listOf(site, gameId, users.master), []);
+    assertError(await revoke(entry.id), "invite.notFound");
+  });
+
+  test("rights as for making an invite: a player 403, not a member 404, no session 401, a foreign Origin 403", async () => {
+    const { site, users } = await siteWith("master", "pat", "eve");
+    const { gameId } = await gameOf(site, users.master);
+    const code = await invite(site, gameId, users.master);
+    assert.equal((await call(site, "POST", `/api/join/${code}`, users.pat.cookie)).status, 200);
+    const [entry] = await listOf(site, gameId, users.master);
+    const url = `/api/games/${gameId}/invites/${entry.id}`;
+
+    assertError(await call(site, "GET", `/api/games/${gameId}/invites`, users.pat.cookie), "auth.forbidden");
+    assertError(await call(site, "DELETE", url, users.pat.cookie), "auth.forbidden");
+    // Not a member, the administrator too: the game is not given away.
+    for (const person of [users.eve, users.admin]) {
+      assertError(await call(site, "GET", `/api/games/${gameId}/invites`, person.cookie), "game.notFound");
+      assertError(await call(site, "DELETE", url, person.cookie), "game.notFound");
+    }
+    assertError(await call(site, "GET", `/api/games/${gameId}/invites`), "auth.required");
+    assertError(await call(site, "DELETE", url), "auth.required");
+    for (const origin of ["http://evil.example", null]) {
+      const headers: Record<string, string> = { "Content-Type": "application/json", Cookie: users.master.cookie };
+      if (origin) headers.Origin = origin;
+      const response = await fetch(site.base + url, { method: "DELETE", headers, body: "{}" });
+      assertError({ status: response.status, body: await response.json() }, "request.origin");
+    }
+    assert.deepEqual(await listOf(site, gameId, users.master), [entry], "the invite is still there");
+  });
+});
+
 describe("parallel registrations (R43)", () => {
   test("by an invite of one entry: one succeeds, the others are refused; one account and one new member", async () => {
     const { site, users } = await siteWith();
