@@ -6,15 +6,16 @@ import { showAdmin } from "./app/admin.ts";
 import { forwardPatch } from "./app/api.ts";
 import type { AccountSettings } from "./app/api.ts";
 import { startGame } from "./app/game.ts";
-import type { GameBoard } from "./app/game.ts";
+import type { BoardAccess, GameBoard } from "./app/game.ts";
 import { showGames } from "./app/games.ts";
 import { startAccount } from "./app/login.ts";
 import { EDGE_TYPES, isSideId, isSizeId, MARK_COLORS, OBJECT_TYPES, SIDES, SIZES, TERRAIN } from "./board/catalog.ts";
 import type { TerrainId } from "./board/catalog.ts";
 import { cellAt, DEFAULT_SCALE, panBy } from "./board/geometry.ts";
+import type { Point } from "./board/geometry.ts";
 import { editTokenPatch } from "./board/pieces.ts";
 import { drawBoard, fitCanvas, readBoardColors } from "./board/render.ts";
-import type { BoardColors, Viewport } from "./board/render.ts";
+import type { BoardColors, BoardOverlay, Viewport } from "./board/render.ts";
 import { drawObjectSign } from "./board/signs.ts";
 import { ENCLOSE_LIMIT, ERASE_FILTERS } from "./board/edit.ts";
 import { applyToChange, beginChange, DIAGONAL_RULES, diagonalRule, finishChange, isToken, newHistory, redo, undo } from "./board/store.ts";
@@ -30,8 +31,14 @@ import { isThemeChoice, startThemes, THEME_CHOICES } from "./theme.ts";
 const LANG_KEY = "battlemap.lang";
 const THEME_KEY = "battlemap.theme";
 const DRAFT_SAVE_DELAY_MS = 1000;
-/** Tools a read-only board keeps: looking around and measuring (players get more in stage 6). */
+/** Tools a read-only board keeps: looking around and measuring. */
 const READ_ONLY_TOOLS: readonly Tool[] = ["select", "ruler"];
+/** A player moves tokens of the side "players", measures and pings (plan 5.4, R6). */
+const PLAYER_TOOLS: readonly Tool[] = ["select", "ruler", "ping"];
+/** The draft has no one to ping. */
+const DRAFT_TOOLS: readonly Tool[] = TOOLS.filter((tool) => tool !== "ping");
+/** How long a ping shows on the board (plan 8.6). */
+const PING_MS = 3000;
 
 const DRAFT_NOTICE: Record<DraftProblem, Key> = {
   newer: "notice.draftNewer",
@@ -156,12 +163,17 @@ if (draft.problem) showNotice(DRAFT_NOTICE[draft.problem]);
 /** The undo history of the draft, kept while a game scene is on the board. */
 let draftHistory = newHistory();
 
-/**
- * A game scene on the board (app/game.ts), null for the draft. `changed` gets every finished change;
- * null makes the board read-only.
- */
-let game: { changed: ((patch: Patch) => void) | null } | null = null;
+/** A game scene on the board (app/game.ts) and what the user may do on it, null for the draft. */
+let game: BoardAccess | null = null;
 const readOnly = (): boolean => game !== null && game.changed === null;
+/** A player's board: no painting, no undo, only tokens of the side "players" move (plan 5.4). */
+const player = (): boolean => game !== null && game.player;
+
+function allowedTools(): readonly Tool[] {
+  if (!game) return DRAFT_TOOLS;
+  if (readOnly()) return READ_ONLY_TOOLS;
+  return player() ? PLAYER_TOOLS : TOOLS;
+}
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -198,12 +210,15 @@ const board: Board = {
   markColor: MARK_COLORS[0].value,
   selection: null,
   hover: null,
+  playerTokensOnly: false,
 };
 
 // Starts at zero size with the camera on cell 0,0, so the first frame puts cell 0,0 in the middle.
 let viewport: Viewport = { width: 0, height: 0 };
 let colors: BoardColors = readBoardColors();
 let frame = 0;
+/** Pings shown on the board, with the time each one came (performance.now()). */
+let pings: { point: Point; name: string; shownAt: number }[] = [];
 
 function redraw(): void {
   if (frame) return;
@@ -213,7 +228,12 @@ function redraw(): void {
     // The middle of the board stays in place when the window changes size.
     board.camera = panBy(board.camera, (next.width - viewport.width) / 2, (next.height - viewport.height) / 2);
     viewport = next;
-    drawBoard(ctx, viewport, board.scene, board.camera, colors, tools.overlays());
+    const now = performance.now();
+    pings = pings.filter((ping) => now - ping.shownAt < PING_MS);
+    const pingOverlays = pings.map(({ point, name, shownAt }): BoardOverlay => ({ kind: "ping", point, label: name, age: (now - shownAt) / PING_MS }));
+    drawBoard(ctx, viewport, board.scene, board.camera, colors, [...tools.overlays(), ...pingOverlays]);
+    // A ping on the board keeps the frames coming until it is gone.
+    if (pings.length > 0) redraw();
   });
 }
 
@@ -242,7 +262,7 @@ function sceneChanged(inverse: Patch): void {
     undo(board.scene, board.history);
     board.history = newHistory();
   } else if (game?.changed) {
-    game.changed(forwardPatch(board.scene, inverse));
+    game.changed(forwardPatch(board.scene, inverse), inverse);
   } else {
     scheduleSave();
   }
@@ -259,13 +279,14 @@ function commit(patch: Patch): void {
   if (finishChange(board.history)) sceneChanged(lastPatch(board.history.undo));
 }
 
-// Both do nothing while a stroke is under way (see beginChange in store.ts).
+// Both do nothing while a stroke is under way (see beginChange in store.ts). A player has no undo: taking back
+// a move would also take back what the master changed in the token since.
 function doUndo(): void {
-  if (undo(board.scene, board.history)) sceneChanged(lastPatch(board.history.redo));
+  if (!player() && undo(board.scene, board.history)) sceneChanged(lastPatch(board.history.redo));
 }
 
 function doRedo(): void {
-  if (redo(board.scene, board.history)) sceneChanged(lastPatch(board.history.undo));
+  if (!player() && redo(board.scene, board.history)) sceneChanged(lastPatch(board.history.undo));
 }
 
 undoButton.addEventListener("click", doUndo);
@@ -332,10 +353,11 @@ const markEraseFilter = choiceButtons(eraseFilters, ERASE_FILTERS, (filter) => `
 // Each tool shows only its own options: size for the brush and the eraser, edge type for walls, filter for the eraser,
 // the symbol for objects, side, size and name for tokens, colour for the pencil.
 function updateTools(): void {
-  if (readOnly() && !READ_ONLY_TOOLS.includes(board.tool)) board.tool = "select";
+  const allowed = allowedTools();
+  if (!allowed.includes(board.tool)) board.tool = "select";
   TOOLS.forEach((tool, index) => {
     const element = toolList.children[index];
-    if (element instanceof HTMLElement) element.hidden = readOnly() && !READ_ONLY_TOOLS.includes(tool);
+    if (element instanceof HTMLElement) element.hidden = !allowed.includes(tool);
   });
   markTool(board.tool);
   sizeGroup.hidden = board.tool !== "brush" && board.tool !== "eraser";
@@ -480,7 +502,7 @@ let editedToken: string | null = null;
 
 function openTokenEditor(id: string): void {
   const token = board.scene.tokens[id];
-  if (!isToken(token) || board.history.open || readOnly()) return;
+  if (!isToken(token) || board.history.open || readOnly() || player()) return;
   editedToken = id;
   editSide.value = token.side;
   editSize.value = token.size;
@@ -548,6 +570,7 @@ const tools = attachTools(canvas, board, {
   costLabel: (feet) => t("measure.cost", { feet }),
   undo: doUndo,
   redo: doRedo,
+  ping: (point) => game?.ping(point),
 });
 
 updateTools();
@@ -575,12 +598,16 @@ function applyAccountSettings(settings: AccountSettings): void {
   }
 }
 
-// ---- games: a scene from the server instead of the draft (plan 5.3, 8.5) ----
+// ---- games: a scene from the server instead of the draft (plan 5.3, 8.5, 8.6) ----
 
-/** After switching between the draft and a game scene, or between an editable and a read-only one. */
+/** After switching between the draft and a game scene, or between an editor's, a player's and a read-only board. */
 function boardModeChanged(): void {
-  document.body.classList.toggle("read-only", readOnly());
-  diagonalSelect.disabled = readOnly();
+  // A player's board hides the palette and undo like a read-only one.
+  document.body.classList.toggle("read-only", readOnly() || player());
+  diagonalSelect.disabled = readOnly() || player();
+  board.playerTokensOnly = player();
+  board.selection = null;
+  pings = [];
   updateTools();
   updateHistoryButtons();
   diagonalSelect.value = diagonalRule(board.scene);
@@ -588,15 +615,14 @@ function boardModeChanged(): void {
 }
 
 const gameBoard: GameBoard = {
-  show(scene, changed) {
+  show(scene, access) {
     if (!game) {
       if (saveTimer !== undefined) saveNow();
       draftHistory = board.history;
     }
-    game = { changed };
+    game = access;
     board.scene = scene;
     board.history = newHistory();
-    board.selection = null;
     boardModeChanged();
   },
   showDraft() {
@@ -604,10 +630,17 @@ const gameBoard: GameBoard = {
     game = null;
     board.scene = draft.scene;
     board.history = draftHistory;
-    board.selection = null;
     boardModeChanged();
   },
   busy: () => board.history.open !== null,
+  refresh() {
+    diagonalSelect.value = diagonalRule(board.scene);
+    redraw();
+  },
+  ping(point, name) {
+    pings.push({ point, name, shownAt: performance.now() });
+    redraw();
+  },
 };
 
 const games = startGame({

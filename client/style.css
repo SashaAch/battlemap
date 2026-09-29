@@ -516,7 +516,17 @@ button.primary:hover:not(:disabled) {
   background: var(--ui-accent);
 }
 
-/* A read-only board (a player): no terrain to paint, nothing to undo. */
+/* "online" at a member with an open stream (plan 8.6). */
+.online {
+  font-size: 12px;
+  color: var(--ui-accent);
+}
+
+.online[hidden] {
+  display: none;
+}
+
+/* A read-only board or a player's: no terrain to paint, nothing to undo. */
 .read-only .palette,
 .read-only #undo,
 .read-only #redo {

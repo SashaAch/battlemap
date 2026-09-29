@@ -570,16 +570,11 @@ export class Database {
     this.#run("UPDATE scenes SET visible = ? WHERE id = ?", flag(visible), sceneId);
   }
 
-  /** Saves a changed state; returns the new version. */
-  saveSceneState(sceneId: number, stateJson: string, updatedAt: number): number {
-    const row = this.#get(
-      "UPDATE scenes SET state_json = ?, version = version + 1, updated_at = ? WHERE id = ? RETURNING version",
-      stateJson,
-      updatedAt,
-      sceneId,
-    );
-    if (!row) throw new Error(`scene ${sceneId} is missing`);
-    return Number(row.version);
+  /** Saves a changed state with its version (the number of changes made to it, written or not). */
+  saveSceneState(sceneId: number, stateJson: string, version: number, updatedAt: number): void {
+    if (this.#run("UPDATE scenes SET state_json = ?, version = ?, updated_at = ? WHERE id = ?", stateJson, version, updatedAt, sceneId) !== 1) {
+      throw new Error(`scene ${sceneId} is missing`);
+    }
   }
 
   /**

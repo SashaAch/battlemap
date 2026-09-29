@@ -1,5 +1,5 @@
 // Board input: camera (mouse wheel and trackpad, space or middle button drag, two fingers)
-// and the tools (plan 5.5, 5.9): select, brush, fill, room, walls, objects, tokens, pencil, ruler, eraser.
+// and the tools (plan 5.5, 5.9): select, brush, fill, room, walls, objects, tokens, pencil, ruler, eraser, ping.
 
 import { sizeSpan } from "./catalog.ts";
 import type { EdgeType, MarkColor, ObjectType, TerrainId } from "./catalog.ts";
@@ -42,7 +42,7 @@ import type { History, Patch, Scene } from "./store.ts";
 export const BRUSH_SIZES = [1, 2, 3] as const;
 type BrushSize = (typeof BRUSH_SIZES)[number];
 
-export const TOOLS = ["select", "brush", "fill", "room", "walls", "objects", "tokens", "pencil", "ruler", "eraser"] as const;
+export const TOOLS = ["select", "brush", "fill", "room", "walls", "objects", "tokens", "pencil", "ruler", "eraser", "ping"] as const;
 export type Tool = (typeof TOOLS)[number];
 
 /** Tool shortcuts by physical key (plan 5.9), so they work in any keyboard layout. */
@@ -57,6 +57,7 @@ const TOOL_KEYS: Record<string, Tool> = {
   KeyP: "pencil",
   KeyM: "ruler",
   KeyE: "eraser",
+  KeyG: "ping",
 };
 
 /** A selected token or object: Delete removes it. */
@@ -82,6 +83,8 @@ export interface Board {
   selection: Selection | null;
   /** World point under the mouse or pen, null when it is off the board. */
   hover: Point | null;
+  /** A player's board (plan 5.4): select takes only tokens of the side "players", nothing is deleted. */
+  playerTokensOnly: boolean;
 }
 
 interface ToolHooks {
@@ -104,6 +107,8 @@ interface ToolHooks {
   costLabel(feet: number): string;
   undo(): void;
   redo(): void;
+  /** A click with the ping tool. */
+  ping(world: Point): void;
 }
 
 export interface Tools {
@@ -239,7 +244,7 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
     const cell = cellAt(world);
     if (tokenId !== null) {
       const token = board.scene.tokens[tokenId];
-      if (!isToken(token)) return false;
+      if (!isToken(token) || (board.playerTokensOnly && token.side !== "players")) return false;
       board.selection = { collection: "tokens", id: tokenId };
       drag = {
         kind: "token",
@@ -250,7 +255,7 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
         places: [{ x: token.x, y: token.y }],
       };
     } else {
-      const objectId = objectAt(board.scene, cell);
+      const objectId = board.playerTokensOnly ? null : objectAt(board.scene, cell);
       if (objectId === null) return false;
       board.selection = { collection: "objects", id: objectId };
       drag = { kind: "object", pointerId, id: objectId };
@@ -334,7 +339,7 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
 
   const deleteSelection = (): void => {
     const selection = board.selection;
-    if (!selection || board.history.open) return;
+    if (!selection || board.history.open || board.playerTokensOnly) return;
     board.selection = null;
     if (Object.hasOwn(board.scene[selection.collection], selection.id)) commit([[selection.collection, selection.id, null]]);
     hooks.redraw();
@@ -369,6 +374,9 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
         return false;
       case "objects":
         placeObject(world);
+        return false;
+      case "ping":
+        hooks.ping(world);
         return false;
       case "ruler": {
         const cell = cellAt(world);

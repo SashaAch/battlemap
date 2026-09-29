@@ -15,9 +15,13 @@ try {
     log: (line) => console.log(line),
   });
   const stop = (): void => {
+    // Closing writes the scenes changed in the last second; a failure there is printed.
     server.close().then(
       () => process.exit(0),
-      () => process.exit(1),
+      (error: unknown) => {
+        console.error(`battlemap: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
+        process.exit(1);
+      },
     );
   };
   process.once("SIGINT", stop);
