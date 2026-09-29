@@ -24,6 +24,21 @@ export function stepsBetween(from: Point, to: Point): Point[] {
 }
 
 /**
+ * The path of a dragged token after the pointer reaches `target` (Р40): the steps to it are added one by one,
+ * and a step onto a place already on the path cuts the path back to that place, so going back costs nothing.
+ * Returns a new path; `path` must hold at least the starting place.
+ */
+export function extendPath(path: readonly Point[], target: Point): Point[] {
+  const next = [...path];
+  for (const step of stepsBetween(next[next.length - 1], target)) {
+    const seen = next.findIndex((place) => place.x === step.x && place.y === step.y);
+    if (seen >= 0) next.length = seen + 1;
+    else next.push(step);
+  }
+  return next;
+}
+
+/**
  * Feet spent along a path of places, `path[0]` the starting one; a place is the top-left cell of a space
  * of `span` × `span` cells, and each next place is a step to a neighbour. A step costs 5 ft; a diagonal
  * step 5 ft by the core rule, and by the 5/10/5 rule every second diagonal of the whole path costs 10 ft.
@@ -59,7 +74,7 @@ function placeCostsExtra(cells: Readonly<Record<string, unknown>>, place: Point,
 
 export interface Distance {
   feet: number;
-  /** Feet in cells of 5 ft. */
+  /** Cells of the path by either rule: `max(dx, dy)` (Р40). */
   cells: number;
 }
 
@@ -70,6 +85,7 @@ export interface Distance {
 export function distance(from: Point, to: Point, rule: DiagonalRule): Distance {
   const dx = Math.abs(to.x - from.x);
   const dy = Math.abs(to.y - from.y);
-  const cells = Math.max(dx, dy) + (rule === "5-10-5" ? Math.floor(Math.min(dx, dy) / 2) : 0);
-  return { feet: cells * FEET_PER_CELL, cells };
+  const cells = Math.max(dx, dy);
+  const extra = rule === "5-10-5" ? Math.floor(Math.min(dx, dy) / 2) : 0;
+  return { feet: (cells + extra) * FEET_PER_CELL, cells };
 }

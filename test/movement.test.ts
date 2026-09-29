@@ -5,7 +5,7 @@ import { describe, test } from "node:test";
 
 import type { TerrainId } from "../client/src/board/catalog.ts";
 import type { Point } from "../client/src/board/geometry.ts";
-import { distance, pathCost, stepsBetween } from "../client/src/board/movement.ts";
+import { distance, extendPath, pathCost, stepsBetween } from "../client/src/board/movement.ts";
 import { diagonalRule, newScene } from "../client/src/board/store.ts";
 
 /** A path of places starting at `start`, walked through the given cells one step at a time. */
@@ -126,6 +126,52 @@ describe("steps between cells", () => {
   });
 });
 
+describe("the path of a dragged token (Р40)", () => {
+  /** Drags from the start through the targets one after another. */
+  function drag(start: Point, ...targets: [number, number][]): Point[] {
+    let path = [start];
+    for (const [x, y] of targets) path = extendPath(path, { x, y });
+    return path;
+  }
+
+  test("4 cells forward and 2 back leave a path of 2 cells", () => {
+    const path = drag({ x: 0, y: 0 }, [1, 0], [2, 0], [3, 0], [4, 0], [3, 0], [2, 0]);
+    assert.deepEqual(path, walk({ x: 0, y: 0 }, [1, 0], [2, 0]));
+    assert.equal(pathCost({}, path, 1, "5"), 10);
+  });
+
+  test("a jump back is cut the same way as steps back", () => {
+    assert.deepEqual(drag({ x: 0, y: 0 }, [4, 0], [2, 0]), walk({ x: 0, y: 0 }, [1, 0], [2, 0]));
+  });
+
+  test("a return to the starting cell costs 0 ft", () => {
+    const path = drag({ x: 0, y: 0 }, [1, 1], [2, 1], [1, 0], [0, 0]);
+    assert.deepEqual(path, [{ x: 0, y: 0 }]);
+    assert.equal(pathCost({}, path, 1, "5-10-5"), 0);
+  });
+
+  test("the cost is counted again over what is left, diagonals of 5/10/5 included", () => {
+    const cells = terrain(["3,3", "rubble"]);
+    const there = drag({ x: 0, y: 0 }, [3, 3]);
+    assert.equal(pathCost(cells, there, 1, "5-10-5"), 25);
+    const back = extendPath(there, { x: 1, y: 1 });
+    assert.deepEqual(back, walk({ x: 0, y: 0 }, [1, 1]));
+    assert.equal(pathCost(cells, back, 1, "5-10-5"), 5);
+  });
+
+  test("crossing the path somewhere else cuts the loop", () => {
+    // Around a square and back into the second cell of the path.
+    const path = drag({ x: 0, y: 0 }, [1, 0], [2, 0], [2, 1], [1, 1], [1, 0], [1, -1]);
+    assert.deepEqual(path, walk({ x: 0, y: 0 }, [1, 0], [1, -1]));
+  });
+
+  test("the path given is not changed", () => {
+    const start = [{ x: 0, y: 0 }];
+    extendPath(start, { x: 2, y: 0 });
+    assert.deepEqual(start, [{ x: 0, y: 0 }]);
+  });
+});
+
 describe("ruler", () => {
   test("the core rule measures the longer side", () => {
     assert.deepEqual(distance({ x: 0, y: 0 }, { x: 6, y: 0 }, "5"), { feet: 30, cells: 6 });
@@ -133,11 +179,11 @@ describe("ruler", () => {
     assert.deepEqual(distance({ x: 2, y: -1 }, { x: -3, y: 2 }, "5"), { feet: 25, cells: 5 });
   });
 
-  test("5/10/5 adds half the shorter side, rounded down", () => {
+  test("5/10/5 adds half the shorter side to the feet, rounded down; cells are the cells of the path (Р40)", () => {
     assert.deepEqual(distance({ x: 0, y: 0 }, { x: 6, y: 0 }, "5-10-5"), { feet: 30, cells: 6 });
-    assert.deepEqual(distance({ x: 0, y: 0 }, { x: 3, y: 3 }, "5-10-5"), { feet: 20, cells: 4 });
-    assert.deepEqual(distance({ x: 0, y: 0 }, { x: 4, y: 4 }, "5-10-5"), { feet: 30, cells: 6 });
-    assert.deepEqual(distance({ x: 2, y: -1 }, { x: -3, y: 2 }, "5-10-5"), { feet: 30, cells: 6 });
+    assert.deepEqual(distance({ x: 0, y: 0 }, { x: 3, y: 3 }, "5-10-5"), { feet: 20, cells: 3 });
+    assert.deepEqual(distance({ x: 0, y: 0 }, { x: 4, y: 4 }, "5-10-5"), { feet: 30, cells: 4 });
+    assert.deepEqual(distance({ x: 2, y: -1 }, { x: -3, y: 2 }, "5-10-5"), { feet: 30, cells: 5 });
   });
 
   test("from a cell to itself is 0", () => {

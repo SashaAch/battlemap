@@ -168,7 +168,7 @@ const board: Board = {
   scene: draft.scene,
   history: newHistory(),
   camera: { x: 0, y: 0, scale: DEFAULT_SCALE },
-  tool: "brush",
+  tool: "select", // Р40: the board opens with the select tool
   terrain: TERRAIN[0].id,
   brushSize: BRUSH_SIZES[0],
   edgeType: EDGE_TYPES[0],

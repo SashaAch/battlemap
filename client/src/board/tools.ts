@@ -21,7 +21,7 @@ import type { Camera, Point } from "./geometry.ts";
 import type { BoardOverlay } from "./render.ts";
 import { edgesPatch, enclosePatch, erasePatch, fillPatch, roomPatch } from "./edit.ts";
 import type { EraseFilter } from "./edit.ts";
-import { distance, pathCost, stepsBetween } from "./movement.ts";
+import { distance, extendPath, pathCost } from "./movement.ts";
 import type { Distance } from "./movement.ts";
 import {
   addMarkPoint,
@@ -138,7 +138,7 @@ type Drag =
       /** The pressed cell relative to the top-left cell of the space. */
       grab: Point;
       span: number;
-      /** Places passed, the first one where the drag started. */
+      /** The path so far, the first place where the drag started; a return to a place cuts it back (extendPath). */
       places: Point[];
     }
   | { kind: "object"; pointerId: number; id: string };
@@ -270,7 +270,7 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
     const target = { x: cell.x - drag.grab.x, y: cell.y - drag.grab.y };
     const last = drag.places[drag.places.length - 1];
     if (target.x === last.x && target.y === last.y) return;
-    drag.places.push(...stepsBetween(last, target));
+    drag.places = extendPath(drag.places, target);
     // A tiny token over a full cell stays where it was until it leaves it; the drop decides.
     apply(moveTokenPatch(board.scene, drag.id, target) ?? []);
   };
