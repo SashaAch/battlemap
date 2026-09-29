@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="ru" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>battlemap</title>
+  <link rel="stylesheet" href="themes.css">
+  <link rel="stylesheet" href="style.css">
+  <script src="dist/app.js" defer></script>
+</head>
+<body>
+  <canvas id="board"></canvas>
+
+  <header class="toolbar">
+    <button type="button" id="undo" data-i18n="toolbar.undo" data-i18n-title="toolbar.undoHint"></button>
+    <button type="button" id="redo" data-i18n="toolbar.redo" data-i18n-title="toolbar.redoHint"></button>
+    <div class="group" role="group" aria-labelledby="brush-label" data-i18n-title="toolbar.brushHint">
+      <span id="brush-label" data-i18n="toolbar.brush"></span>
+      <span id="brush-sizes" class="segmented"></span>
+    </div>
+    <label class="group">
+      <span data-i18n="toolbar.language"></span>
+      <select id="language"></select>
+    </label>
+    <label class="group">
+      <span data-i18n="toolbar.theme"></span>
+      <select id="theme"></select>
+    </label>
+  </header>
+
+  <nav class="palette" aria-labelledby="palette-title">
+    <h2 id="palette-title" data-i18n="palette.title"></h2>
+    <div id="terrain-list" class="terrain-list"></div>
+  </nav>
+
+  <div id="notice" class="notice" role="status" hidden>
+    <span id="notice-text"></span>
+    <button type="button" id="notice-close" data-i18n="notice.close"></button>
+  </div>
+
+  <footer class="status">
+    <span id="status-cell"></span>
+    <span data-i18n="status.scale"></span>
+  </footer>
+</body>
+</html>

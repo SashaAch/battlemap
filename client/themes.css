@@ -1,0 +1,87 @@
+/* Themes (plan 5.15): every variable is set in every theme. Terrain colours are not here:
+   they live in client/src/board/catalog.ts and are the same in all themes. */
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ui-bg: #ffffff;
+  --ui-fg: #1d1f22;
+  --ui-muted: #5d636b;
+  --ui-border: #c9ced4;
+  --ui-hover: #eef1f4;
+  --ui-accent: #2f6fdb;
+  --ui-accent-fg: #ffffff;
+  --ui-focus: #2f6fdb;
+  --ui-notice-bg: #fff4d6;
+  --ui-notice-fg: #3d2e00;
+  --board-void: #f7f8f9;
+  --board-grid: rgba(40, 50, 60, 0.28);
+  --board-cursor: #d6336c;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ui-bg: #1f2227;
+  --ui-fg: #e6e8eb;
+  --ui-muted: #a0a7b0;
+  --ui-border: #3a3f47;
+  --ui-hover: #2b3038;
+  --ui-accent: #5b9cff;
+  --ui-accent-fg: #0b1220;
+  --ui-focus: #5b9cff;
+  --ui-notice-bg: #3a3016;
+  --ui-notice-fg: #ffe7a6;
+  --board-void: #121417;
+  --board-grid: rgba(220, 230, 240, 0.18);
+  --board-cursor: #ff6b9a;
+}
+
+:root[data-theme="parchment"] {
+  color-scheme: light;
+  --ui-bg: #f6ecd4;
+  --ui-fg: #3b2a17;
+  --ui-muted: #6e5a40;
+  --ui-border: #cdb68c;
+  --ui-hover: #ecdcb8;
+  --ui-accent: #8b3a1e;
+  --ui-accent-fg: #fff8ea;
+  --ui-focus: #8b3a1e;
+  --ui-notice-bg: #fff3cf;
+  --ui-notice-fg: #3b2a17;
+  --board-void: #efe2c2;
+  --board-grid: rgba(80, 55, 25, 0.3);
+  --board-cursor: #a4161a;
+}
+
+:root[data-theme="dungeon"] {
+  color-scheme: dark;
+  --ui-bg: #231c17;
+  --ui-fg: #eadfcf;
+  --ui-muted: #b3a592;
+  --ui-border: #4a3d31;
+  --ui-hover: #2f261f;
+  --ui-accent: #d08a3a;
+  --ui-accent-fg: #1a130d;
+  --ui-focus: #e0a050;
+  --ui-notice-bg: #3b2c1a;
+  --ui-notice-fg: #f5deb3;
+  --board-void: #17120f;
+  --board-grid: rgba(235, 200, 150, 0.18);
+  --board-cursor: #ffb347;
+}
+
+:root[data-theme="contrast"] {
+  color-scheme: dark;
+  --ui-bg: #000000;
+  --ui-fg: #ffffff;
+  --ui-muted: #ffffff;
+  --ui-border: #ffffff;
+  --ui-hover: #333333;
+  --ui-accent: #ffd400;
+  --ui-accent-fg: #000000;
+  --ui-focus: #00e5ff;
+  --ui-notice-bg: #000000;
+  --ui-notice-fg: #ffd400;
+  --board-void: #000000;
+  --board-grid: rgba(255, 255, 255, 0.6);
+  --board-cursor: #00e5ff;
+}
