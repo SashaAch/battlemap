@@ -1,0 +1,1039 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Книга Первого Броска</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Alegreya:ital,wght@0,400;0,500;0,700;1,400&family=Alegreya+SC:wght@500;700;800&family=Caveat:wght@500;600&display=swap">
+<style>
+/* Одна тёмная сцена: книга лежит на столе. Цвета заданы явно, от темы просмотрщика не зависят. */
+:root{
+  --table:#181110; --table-glow:#3a2a1e;
+  --leather:#5c1d16; --leather-dark:#35100c;
+  --gold:#d6b16a; --gold-dim:#a88a55;
+  --paper:#efe2c2; --paper-2:#f7eed9;
+  --ink:#2b1d13; --ink-soft:#6b553e; --rule:rgba(43,29,19,.24);
+  --rubric:#9b2c1e; --pen:#2c3d68;
+  --moss:#3b6a58; --indigo:#34466e; --ochre:#8f621a;
+  --wash:rgba(176,128,60,.26); --wash-red:rgba(155,44,30,.18); --wash-green:rgba(59,106,88,.24);
+  --endpaper:#213028;
+  --pw:400px; --ph:580px; /* совпадает с PW/PH в скрипте */
+  color-scheme:dark;
+}
+html,body{height:100%}
+body{
+  margin:0; color:var(--paper); overflow-x:hidden;
+  font-family:Alegreya, Georgia, "Times New Roman", serif;
+  background:
+    radial-gradient(ellipse 70% 55% at 50% 42%, var(--table-glow), transparent 70%),
+    repeating-linear-gradient(92deg, rgba(255,255,255,.012) 0 3px, transparent 3px 11px),
+    var(--table);
+}
+.desk{min-height:100%; box-sizing:border-box; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding-block:18px; padding-inline:16px}
+.stage{position:relative; touch-action:pan-y; flex:none}
+.stage.portrait{overflow-x:clip}
+.book{position:absolute; left:0; top:0; width:calc(2 * var(--pw)); height:var(--ph); transform-origin:0 0; perspective:2600px; transition:transform .8s cubic-bezier(.3,.1,.2,1)}
+.leaf{position:absolute; left:var(--pw); top:0; width:var(--pw); height:var(--ph); transform-origin:0 50%; transform-style:preserve-3d; transform:rotateY(0deg); transition:transform .85s cubic-bezier(.35,.05,.2,1)}
+.leaf.flipped{transform:rotateY(-180deg)}
+.leaf.hard{top:-8px; width:calc(var(--pw) + 10px); height:calc(var(--ph) + 16px)}
+.instant, .instant .leaf{transition:none !important}
+.face{position:absolute; inset:0; overflow:hidden; backface-visibility:hidden; -webkit-backface-visibility:hidden; cursor:pointer}
+.face.back{transform:rotateY(180deg)}
+@media (prefers-reduced-motion: reduce){ .book, .leaf{transition:none !important} }
+
+/* ---------- бумага ---------- */
+.pg:not(.board){
+  box-sizing:border-box; display:flex; flex-direction:column;
+  padding:22px 28px 14px 36px; color:var(--ink);
+  font:14px/1.42 Alegreya, Georgia, serif;
+  background:
+    linear-gradient(to right, rgba(80,45,15,.30), rgba(80,45,15,0) 8%),
+    linear-gradient(to left, rgba(120,80,30,.14), transparent 3%),
+    radial-gradient(ellipse at 18% 8%, rgba(255,251,238,.7), transparent 55%),
+    radial-gradient(ellipse at 88% 96%, rgba(150,105,45,.20), transparent 50%),
+    var(--paper);
+}
+.pg.back:not(.board){
+  padding:22px 36px 14px 28px;
+  background:
+    linear-gradient(to left, rgba(80,45,15,.30), rgba(80,45,15,0) 8%),
+    linear-gradient(to right, rgba(120,80,30,.14), transparent 3%),
+    radial-gradient(ellipse at 82% 8%, rgba(255,251,238,.7), transparent 55%),
+    radial-gradient(ellipse at 12% 96%, rgba(150,105,45,.20), transparent 50%),
+    var(--paper);
+}
+.run{display:flex; justify-content:space-between; align-items:center; gap:8px; font:500 11px/1 "Alegreya SC", Georgia, serif; letter-spacing:.08em; color:var(--ink-soft); padding-bottom:6px; border-bottom:1px solid var(--rule); margin-bottom:11px}
+.badge{font:700 10px/1 "Alegreya SC", Georgia, serif; letter-spacing:.06em; padding:3px 7px 4px; border:1px solid currentColor; border-radius:10px; white-space:nowrap}
+[data-ch="1"] .badge{color:var(--moss)} [data-ch="2"] .badge{color:var(--indigo)}
+[data-ch="3"] .badge{color:var(--rubric)} [data-ch="4"] .badge{color:var(--ochre)} [data-ch="5"] .badge{color:var(--ink)}
+.body{flex:1; min-height:0; overflow-y:auto; display:flex; flex-direction:column; gap:8px}
+.folio{text-align:center; font:500 12px/1 "Alegreya SC", Georgia, serif; color:var(--ink-soft); padding-top:7px; font-variant-numeric:tabular-nums}
+.body p, .body h2, .body h3, .body ul, .body ol{margin:0}
+.body h2{font:700 21px/1.12 "Alegreya SC", Georgia, serif; color:var(--rubric); text-wrap:balance}
+.body h3{font:700 14.5px/1.2 "Alegreya SC", Georgia, serif; letter-spacing:.03em; margin-top:3px}
+.body b{font-weight:700}
+.chap{display:flex; align-items:baseline; flex-wrap:wrap; gap:4px 10px; padding-bottom:5px; border-bottom:1px solid var(--rule)}
+.chap-n{font:800 19px/1 "Alegreya SC", Georgia, serif; color:var(--rubric)}
+.chap-for{font:italic 13px/1.2 Alegreya, Georgia, serif; color:var(--ink-soft)}
+.dc::first-letter{float:left; font:800 46px/.82 "Alegreya SC", Georgia, serif; color:var(--rubric); margin:3px 6px 0 0}
+.note{font:500 17px/1.12 Caveat, "Comic Sans MS", cursive; color:var(--pen); border-left:2px solid rgba(44,61,104,.35); padding-left:9px; transform:rotate(-.7deg); margin-top:auto}
+.cap{font:italic 12.5px/1.3 Alegreya, Georgia, serif; color:var(--ink-soft); text-align:center}
+.formula{font:700 17px/1.2 "Alegreya SC", Georgia, serif; text-align:center; padding:6px 0; border-top:1px solid var(--rule); border-bottom:1px solid var(--rule)}
+.formula i{font-style:normal; color:var(--rubric)}
+.items{display:flex; flex-direction:column; gap:5px}
+.small{font-size:13px; line-height:1.36}
+.num{font-variant-numeric:tabular-nums}
+.dots{color:var(--rubric); letter-spacing:.1em; font-size:11px}
+.tbl{width:100%; border-collapse:collapse; font-size:12.5px; line-height:1.3}
+.tbl th{font:700 11px/1.2 "Alegreya SC", Georgia, serif; letter-spacing:.05em; text-align:left; color:var(--rubric); border-bottom:1px solid var(--ink); padding:0 6px 3px 0}
+.tbl td{padding:4px 8px 4px 0; border-bottom:1px dotted var(--rule); vertical-align:top}
+.tbl td:first-child{width:50%}
+.strip{display:grid; grid-template-columns:repeat(7,1fr); text-align:center; border:1px solid var(--rule); font-variant-numeric:tabular-nums}
+.strip.six{grid-template-columns:repeat(3,1fr)}
+.strip div{padding:4px 2px; border-right:1px solid var(--rule); font-size:11.5px; line-height:1.2}
+.strip.six div:nth-child(3n){border-right:0}
+.strip.six div:nth-child(-n+3){border-bottom:1px solid var(--rule)}
+.strip div:last-child{border-right:0}
+.strip b{display:block; font:700 15px/1.2 "Alegreya SC", Georgia, serif}
+.play{display:flex; flex-direction:column; gap:3px; font-size:13.5px; line-height:1.35}
+.who{font:700 11.5px "Alegreya SC", Georgia, serif; letter-spacing:.05em; color:var(--rubric)}
+ol.big{list-style:none; padding:0; display:flex; flex-direction:column; gap:11px; counter-reset:n}
+ol.big li{display:grid; grid-template-columns:30px 1fr; counter-increment:n}
+ol.big li::before{content:counter(n); font:800 26px/1 "Alegreya SC", Georgia, serif; color:var(--rubric)}
+.turns{display:flex; flex-direction:column; gap:7px; font-size:13px; line-height:1.34}
+.turns p{display:grid; grid-template-columns:30px 1fr; align-items:start}
+.ini{width:22px; height:22px; border-radius:50%; border:1.4px solid var(--ink); display:grid; place-items:center; font:700 11px/1 "Alegreya SC", Georgia, serif; font-variant-numeric:tabular-nums}
+.ini.foe{border-color:var(--rubric); color:var(--rubric)}
+.time{display:flex; flex-direction:column; gap:6px; font-size:13.5px; line-height:1.34}
+.time p{display:grid; grid-template-columns:44px 1fr}
+.time span{font:700 13px/1.35 "Alegreya SC", Georgia, serif; color:var(--rubric); font-variant-numeric:tabular-nums}
+.say{display:flex; flex-direction:column; gap:4px; font-style:italic; font-size:14.5px}
+.say p{padding-left:12px; border-left:2px solid var(--wash)}
+.cheat{display:grid; grid-template-columns:1fr 1fr; gap:6px; font-size:12px; line-height:1.3}
+.cheat div{border:1px solid var(--rule); padding:6px 8px; background:rgba(255,250,235,.35)}
+.cheat h4{margin:0 0 2px; font:700 12px/1.2 "Alegreya SC", Georgia, serif; color:var(--rubric); letter-spacing:.04em}
+.cheat .wide{grid-column:1 / -1}
+.title-h{font-size:27px !important; text-align:center}
+.lead{text-align:center; font-style:italic; color:var(--ink-soft)}
+.paths{display:flex; flex-direction:column}
+.path, .go{font:inherit; color:inherit; background:none; border:0; cursor:pointer; text-align:left}
+.path{display:grid; grid-template-columns:1fr auto; column-gap:10px; padding:6px 4px; border-bottom:1px dotted var(--rule)}
+.path:hover, .go:hover{background:var(--wash)}
+.pq{font-style:italic; line-height:1.25}
+.pa{font:700 12.5px/1.3 "Alegreya SC", Georgia, serif; color:var(--rubric); letter-spacing:.03em}
+.pn{grid-column:2; grid-row:1 / 3; align-self:center; font:700 16px "Alegreya SC", Georgia, serif; font-variant-numeric:tabular-nums}
+.go{font:700 13px "Alegreya SC", Georgia, serif; color:var(--rubric); border:1px solid var(--rubric); border-radius:14px; padding:3px 12px; align-self:flex-start}
+.fine{font-size:12px; line-height:1.35; color:var(--ink-soft); margin-top:auto !important}
+.orn{text-align:center; color:var(--rubric); letter-spacing:.6em; font-size:12px}
+.pg :focus-visible, .bar :focus-visible{outline:2px solid var(--gold); outline-offset:2px}
+.pg:not(.board) :focus-visible{outline-color:var(--rubric)}
+
+/* ---------- зарисовки ---------- */
+.sk{display:block; width:100%; height:auto; flex:none; overflow:visible}
+.sk *{fill:none; stroke:var(--ink); stroke-width:1.4; stroke-linecap:round; stroke-linejoin:round}
+.sk text{fill:var(--ink); stroke:none; font:500 15px Caveat, cursive}
+.sk text.n{font:700 11px Alegreya, Georgia, serif}
+.sk text.big{font:700 16px Alegreya, Georgia, serif}
+.sk text.sm{font-size:13px}
+.sk text.red{fill:var(--rubric)}
+.sk text.halo{paint-order:stroke; stroke:var(--paper); stroke-width:4px}
+.sk .w{fill:var(--wash)} .sk .r{fill:var(--wash-red)} .sk .g{fill:var(--wash-green)}
+.sk .p{fill:var(--paper-2)} .sk .ink{fill:var(--ink)} .sk .inkr{fill:var(--rubric); stroke:none}
+.sk .faint{stroke-opacity:.35; stroke-width:1} .sk .thick{stroke-width:2.6}
+.sk .red{stroke:var(--rubric)} .sk .dash{stroke-dasharray:4 4}
+.sk .arr{marker-end:url(#ar)}
+
+/* ---------- переплёт ---------- */
+.board{color:var(--gold); border-radius:3px 7px 7px 3px;
+  background:
+    radial-gradient(120% 90% at 30% 18%, rgba(255,190,150,.12), transparent 60%),
+    repeating-radial-gradient(circle at 17% 32%, rgba(0,0,0,.06) 0 1px, transparent 1px 3px),
+    linear-gradient(160deg, #6c241b, var(--leather) 45%, var(--leather-dark));
+  box-shadow:3px 3px 0 #2a0b08, 0 22px 44px rgba(0,0,0,.55);
+}
+.board.back{border-radius:7px 3px 3px 7px; box-shadow:-3px 3px 0 #2a0b08, 0 22px 44px rgba(0,0,0,.55)}
+.cover::before, .cover-back::before{content:""; position:absolute; top:0; bottom:0; width:24px; pointer-events:none}
+.cover::before{left:0; background:linear-gradient(to right, rgba(0,0,0,.45) 0 12px, rgba(255,210,170,.12) 13px 15px, rgba(0,0,0,.18) 16px, transparent)}
+.cover-back::before{right:0; background:linear-gradient(to left, rgba(0,0,0,.45) 0 12px, rgba(255,210,170,.12) 13px 15px, rgba(0,0,0,.18) 16px, transparent)}
+.frame{position:absolute; inset:26px 24px 26px 40px; border:2px solid var(--gold); outline:1px solid rgba(214,177,106,.45); outline-offset:5px; display:flex; flex-direction:column; align-items:center; justify-content:space-between; padding:24px 16px 22px; text-align:center}
+.cover-back .frame{inset:26px 40px 26px 24px; justify-content:center; gap:22px}
+.emb{color:var(--gold); text-shadow:0 1px 0 rgba(0,0,0,.6), 0 -1px 0 rgba(255,225,160,.2)}
+.cv-top{font:700 12px/1 "Alegreya SC", Georgia, serif; letter-spacing:.3em}
+.cv-title{margin:0; font:800 48px/.98 "Alegreya SC", Georgia, serif; letter-spacing:.01em}
+.cv-title span{display:block; font-size:22px; letter-spacing:.35em; margin-bottom:6px}
+.cv-sub{font:italic 15px/1.35 Alegreya, Georgia, serif; color:var(--gold-dim); max-width:260px}
+.emblem{width:118px; height:118px}
+.emblem *{fill:none; stroke:var(--gold); stroke-width:2; stroke-linejoin:round}
+.emblem text{fill:var(--gold); stroke:none; font:800 22px "Alegreya SC", Georgia, serif}
+.ep{position:absolute; box-sizing:border-box;
+  background:
+    radial-gradient(circle, rgba(214,177,106,.5) 1.2px, transparent 1.8px) 0 0 / 16px 16px,
+    radial-gradient(circle, rgba(214,177,106,.25) 1px, transparent 1.5px) 8px 8px / 16px 16px,
+    var(--endpaper);
+}
+.board.back .ep{inset:8px 0 8px 10px; box-shadow:inset -18px 0 22px -12px rgba(0,0,0,.6)}
+.board.front .ep{inset:8px 10px 8px 0; box-shadow:inset 18px 0 22px -12px rgba(0,0,0,.6)}
+.plate{position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); width:262px; box-sizing:border-box; padding:20px 22px; background:var(--paper-2); color:var(--ink); text-align:center; border:1px solid rgba(43,29,19,.5); outline:1px solid rgba(43,29,19,.3); outline-offset:-6px; box-shadow:0 3px 8px rgba(0,0,0,.45); font:14px/1.4 Alegreya, Georgia, serif; display:flex; flex-direction:column; gap:9px}
+.plate p, .plate h3{margin:0}
+.plate h3{font:700 14px "Alegreya SC", Georgia, serif; color:var(--rubric); letter-spacing:.06em}
+.plate .line{height:26px; border-bottom:1px solid var(--ink)}
+.plate .lines{height:150px; background:repeating-linear-gradient(to bottom, transparent 0 24px, rgba(43,29,19,.35) 24px 25px)}
+.plate .hand{font:600 22px/1.1 Caveat, cursive; color:var(--pen)}
+
+/* ---------- управление ---------- */
+.bar{display:flex; flex-direction:column; align-items:center; gap:10px; max-width:100%}
+.row{display:flex; align-items:center; gap:14px}
+.arrow{width:40px; height:40px; border-radius:50%; border:1px solid rgba(214,177,106,.5); background:rgba(92,29,22,.5); color:var(--gold); font:700 22px/1 Alegreya, Georgia, serif; cursor:pointer}
+.arrow:disabled{opacity:.3; cursor:default}
+.where{min-width:170px; text-align:center; font:500 14px "Alegreya SC", Georgia, serif; letter-spacing:.06em; color:var(--gold-dim); font-variant-numeric:tabular-nums}
+.chips{display:flex; flex-wrap:wrap; justify-content:center; gap:6px}
+.chip{font:500 13px/1 "Alegreya SC", Georgia, serif; letter-spacing:.04em; color:var(--gold-dim); background:none; border:1px solid rgba(214,177,106,.28); border-radius:14px; padding:6px 11px 7px; cursor:pointer}
+.chip:hover{color:var(--gold); border-color:rgba(214,177,106,.6)}
+.chip[aria-current="true"]{background:var(--leather); color:var(--gold); border-color:var(--gold)}
+.hint{margin:0; font:italic 13px Alegreya, Georgia, serif; color:rgba(214,177,106,.55); text-align:center}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="#2b1d13"/></marker>
+    <g id="d20">
+      <polygon points="0,-20 17.3,-10 17.3,10 0,20 -17.3,10 -17.3,-10"/>
+      <polygon points="0,-11 9.5,5.5 -9.5,5.5"/>
+      <path d="M0 -11L-17.3 -10M0 -11L17.3 -10M0 -11L0 -20M9.5 5.5L17.3 -10M9.5 5.5L17.3 10M9.5 5.5L0 20M-9.5 5.5L-17.3 -10M-9.5 5.5L-17.3 10M-9.5 5.5L0 20"/>
+    </g>
+  </defs>
+</svg>
+
+<main class="desk">
+  <div class="stage" id="stage"><div class="book instant" id="book"></div></div>
+  <nav class="bar" aria-label="Листание книги">
+    <div class="row">
+      <button class="arrow" id="prev" aria-label="Назад">‹</button>
+      <span class="where" id="where" aria-live="polite">Обложка</span>
+      <button class="arrow" id="next" aria-label="Вперёд">›</button>
+    </div>
+    <div class="chips">
+      <button class="chip" data-go="0" data-chip="cover">Обложка</button>
+      <button class="chip" data-go="2" data-chip="0">Оглавление</button>
+      <button class="chip" data-go="ch1" data-chip="1">I · С нуля</button>
+      <button class="chip" data-go="ch2" data-chip="2">II · Знакомым</button>
+      <button class="chip" data-go="ch3" data-chip="3">III · Бой</button>
+      <button class="chip" data-go="ch4" data-chip="4">IV · Первый вечер</button>
+      <button class="chip" data-go="ch5" data-chip="5">Шпаргалка</button>
+    </div>
+    <p class="hint">Нажми на страницу, стрелки ← → на клавиатуре или листай пальцем</p>
+  </nav>
+</main>
+
+<div id="pages" hidden>
+
+<!-- 0: обложка -->
+<section class="pg board cover">
+  <div class="frame emb">
+    <div class="cv-top">Наставление для стола</div>
+    <svg class="emblem" viewBox="-60 -60 120 120" aria-hidden="true">
+      <polygon points="0,-54 46.8,-27 46.8,27 0,54 -46.8,27 -46.8,-27"/>
+      <polygon points="0,-28 24.2,14 -24.2,14"/>
+      <path d="M0 -28L0 -54M0 -28L46.8 -27M0 -28L-46.8 -27M24.2 14L46.8 -27M24.2 14L46.8 27M24.2 14L0 54M-24.2 14L-46.8 -27M-24.2 14L-46.8 27M-24.2 14L0 54"/>
+      <text x="0" y="8" text-anchor="middle">20</text>
+    </svg>
+    <h1 class="cv-title"><span>Книга</span>Первого<br>Броска</h1>
+    <div class="cv-sub">Основы Dungeons &amp; Dragons для тех, кто ни разу не бросал кость</div>
+  </div>
+</section>
+
+<!-- 1: форзац -->
+<section class="pg board inner">
+  <div class="ep">
+    <div class="plate">
+      <h3>Эта книга принадлежит</h3>
+      <div class="line"></div>
+      <p class="small">и всем, кто сядет с ней за один стол</p>
+      <div class="orn">✦ ✦ ✦</div>
+      <h3>Как листать</h3>
+      <p class="small">Нажми на правую страницу, чтобы перевернуть вперёд, на левую, чтобы вернуться. Работают стрелки ← → на клавиатуре. На телефоне веди пальцем вбок.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 2: оглавление -->
+<section class="pg" data-ch="0">
+  <h2 class="title-h">Книга Первого Броска</h2>
+  <p class="lead">Короткое наставление по Dungeons &amp; Dragons для тех, кто садится играть впервые.</p>
+  <h3>С чего начать</h3>
+  <div class="paths">
+    <button class="path" data-go="ch1"><span class="pq">Я вообще ничего не знаю про эту игру</span><span class="pa">Глава I · С нуля</span><span class="pn"></span></button>
+    <button class="path" data-go="ch2"><span class="pq">Играл в Baldur's Gate 3 или смотрел, как играют другие</span><span class="pa">Глава II · Знакомым понаслышке</span><span class="pn"></span></button>
+    <button class="path" data-go="ch3"><span class="pq">Хочу понять, как устроен бой</span><span class="pa">Глава III · Бой</span><span class="pn"></span></button>
+    <button class="path" data-go="ch4"><span class="pq">Мы играем уже сегодня</span><span class="pa">Глава IV · Первый вечер</span><span class="pn"></span></button>
+    <button class="path" data-go="ch5"><span class="pq">Нужна одна страница с самым главным</span><span class="pa">Приложение · Шпаргалка</span><span class="pn"></span></button>
+  </div>
+  <p class="fine">Правила даны по пятой редакции D&amp;D, по книгам 2014 и 2024 годов. Где они расходятся, решает Мастер вашего стола.</p>
+</section>
+
+<!-- ======== Глава I ======== -->
+<section class="pg" data-ch="1">
+  <div class="chap"><span class="chap-n">Глава I</span><span class="chap-for">для тех, кто ничего не знает и не видел</span></div>
+  <h2>Что это вообще за игра</h2>
+  <p class="dc">Dungeons &amp; Dragons, по-русски «Подземелья и драконы», это игра-рассказ за столом. Один человек ведёт игру, его зовут Мастер. Остальные играют героями, у каждого свой.</p>
+  <p>Всё происходит в разговоре: Мастер описывает, что вокруг, вы говорите, что делают ваши герои, а кубики решают, получилось ли.</p>
+  <p>Выигравших и проигравших нет. Отряд вместе проходит историю.</p>
+  <svg class="sk" viewBox="0 0 336 178" role="img" aria-label="Стол сверху: Мастер за ширмой, игроки с листами и кубиками, карта в центре">
+    <rect class="w" x="46" y="40" width="244" height="100" rx="16"/>
+    <circle class="p" cx="168" cy="18" r="10"/>
+    <text x="186" y="22">Мастер</text>
+    <path class="thick" d="M126 52L144 44L192 44L210 52"/>
+    <text x="220" y="36" class="sm">ширма</text>
+    <rect class="p" x="140" y="72" width="56" height="36"/>
+    <path class="faint" d="M154 72V108M168 72V108M182 72V108M140 84H196M140 96H196"/>
+    <circle class="ink" cx="161" cy="90" r="3.2"/>
+    <circle class="inkr" cx="175" cy="78" r="3.2"/>
+    <text x="168" y="126" text-anchor="middle" class="sm">карта</text>
+    <circle class="p" cx="92" cy="154" r="10"/><circle class="p" cx="168" cy="158" r="10"/>
+    <circle class="p" cx="244" cy="154" r="10"/><circle class="p" cx="312" cy="90" r="10"/>
+    <rect class="p" x="80" y="114" width="22" height="17"/><rect class="p" x="157" y="116" width="22" height="17"/>
+    <rect class="p" x="232" y="114" width="22" height="17"/><rect class="p" x="266" y="78" width="17" height="22"/>
+    <use href="#d20" transform="translate(116 122) scale(.33)" class="p"/>
+    <use href="#d20" transform="translate(194 124) scale(.33)" class="p"/>
+    <use href="#d20" transform="translate(222 122) scale(.33)" class="p"/>
+    <use href="#d20" transform="translate(274 116) scale(.33)" class="p"/>
+    <text x="4" y="106">лист героя</text>
+    <path d="M44 110L78 120"/>
+    <text x="276" y="166">игроки</text>
+  </svg>
+  <p class="cap">Так выглядит стол сверху. Карта с фишками бывает не всегда.</p>
+</section>
+
+<section class="pg" data-ch="1">
+  <h2>Как идёт игра</h2>
+  <p>Весь вечер повторяется один и тот же круг из четырёх шагов.</p>
+  <svg class="sk" viewBox="0 0 336 170" role="img" aria-label="Круг игры: Мастер описывает, вы говорите, что делаете, при неясном исходе бросок, Мастер рассказывает, что вышло">
+    <rect class="w" x="88" y="4" width="160" height="36" rx="8"/>
+    <text x="168" y="19" text-anchor="middle">1. Мастер описывает,</text><text x="168" y="34" text-anchor="middle">что вокруг</text>
+    <rect class="w" x="196" y="66" width="136" height="38" rx="8"/>
+    <text x="264" y="81" text-anchor="middle">2. Вы говорите,</text><text x="264" y="97" text-anchor="middle">что делаете</text>
+    <rect class="r" x="88" y="128" width="160" height="38" rx="8"/>
+    <text x="168" y="143" text-anchor="middle">3. Исход неясен?</text><text x="168" y="159" text-anchor="middle">Бросок кости</text>
+    <rect class="w" x="4" y="66" width="136" height="38" rx="8"/>
+    <text x="72" y="81" text-anchor="middle">4. Мастер говорит,</text><text x="72" y="97" text-anchor="middle">что вышло</text>
+    <path class="arr" d="M250 22Q290 22 290 62"/>
+    <path class="arr" d="M290 106Q290 146 252 146"/>
+    <path class="arr" d="M86 146Q46 146 46 108"/>
+    <path class="arr" d="M46 64Q46 22 84 22"/>
+    <use href="#d20" transform="translate(168 85)" class="p"/>
+    <text x="168" y="89" text-anchor="middle" class="n">20</text>
+  </svg>
+  <div class="play">
+    <p><span class="who">Мастер:</span> Дверь в подвал заперта. Из-за неё слышно, как кто-то скребётся.</p>
+    <p><span class="who">Игрок:</span> Пробую вскрыть замок отмычкой.</p>
+    <p><span class="who">Мастер:</span> Брось Ловкость рук.</p>
+    <p><span class="who">Игрок:</span> На кости 13, с моей прибавкой 17.</p>
+    <p><span class="who">Мастер:</span> Щелчок. Дверь медленно открывается…</p>
+  </div>
+  <p class="note">Без просьбы Мастера кости бросать не надо. Он сам скажет, когда и что.</p>
+</section>
+
+<section class="pg" data-ch="1">
+  <h2>Кубики</h2>
+  <p>В наборе семь костей. Их называют по числу граней, а буква «к» значит «кость»: к6 это обычный шестигранный кубик.</p>
+  <svg class="sk" viewBox="0 0 336 92" role="img" aria-label="Кости к4, к6, к8, к10, к12 и к20">
+    <polygon class="p" points="28,16 50,56 6,56"/><text x="28" y="49" text-anchor="middle" class="n">4</text>
+    <rect class="p" x="66" y="20" width="36" height="36" rx="4"/><text x="84" y="43" text-anchor="middle" class="n">6</text>
+    <polygon class="p" points="140,14 162,38 140,62 118,38"/><path d="M118 38H162"/><text x="140" y="34" text-anchor="middle" class="n">8</text>
+    <polygon class="p" points="196,14 218,34 196,62 174,34"/><path d="M174 34L196 44L218 34M196 44V62"/><text x="196" y="36" text-anchor="middle" class="n">10</text>
+    <polygon class="p" points="252,15 273.9,31 265.5,56.6 238.5,56.6 230.1,31"/>
+    <polygon points="252,27 262.5,34.6 258.5,46.9 245.5,46.9 241.5,34.6"/>
+    <path d="M252 15V27M273.9 31L262.5 34.6M265.5 56.6L258.5 46.9M238.5 56.6L245.5 46.9M230.1 31L241.5 34.6"/>
+    <text x="252" y="42" text-anchor="middle" class="n">12</text>
+    <use href="#d20" transform="translate(308 38) scale(1.15)" class="r"/><text x="308" y="42" text-anchor="middle" class="n">20</text>
+    <text x="28" y="84" text-anchor="middle">к4</text><text x="84" y="84" text-anchor="middle">к6</text>
+    <text x="140" y="84" text-anchor="middle">к8</text><text x="196" y="84" text-anchor="middle">к10</text>
+    <text x="252" y="84" text-anchor="middle">к12</text><text x="308" y="84" text-anchor="middle" class="red">к20</text>
+  </svg>
+  <p>Седьмая, к100, это два к10: одна даёт десятки, другая единицы. Нужна редко.</p>
+  <h3>Как читать запись</h3>
+  <p><b class="num">2к6+3</b> значит: брось две шестигранные кости, сложи и прибавь 3. Выпало 4 и 5, итог 12.</p>
+  <p>Главная кость игры <b>к20</b>. Её бросают, когда нужно узнать, получилось или нет. Остальные кости нужны в основном для урона и лечения.</p>
+  <p class="note">Нет кубиков? Подойдёт любое приложение с костями. Но настоящие бросать приятнее.</p>
+</section>
+
+<section class="pg" data-ch="1">
+  <h2>Главный бросок</h2>
+  <p>Почти любое действие с неясным исходом решается одинаково:</p>
+  <p class="formula">к20 + число с листа <i>≥</i> Сложность</p>
+  <svg class="sk" viewBox="0 0 336 96" role="img" aria-label="Пример: на кости 11, прибавка 4, итог 15, Сложность 15, получилось">
+    <use href="#d20" transform="translate(30 40) scale(1.2)" class="p"/><text x="30" y="45" text-anchor="middle" class="n">11</text>
+    <text x="70" y="47" text-anchor="middle" class="big">+</text>
+    <rect class="w" x="88" y="20" width="52" height="40" rx="6"/><text x="114" y="46" text-anchor="middle" class="big">+4</text>
+    <text x="156" y="47" text-anchor="middle" class="big">=</text>
+    <circle class="p" cx="188" cy="40" r="21"/><text x="188" y="46" text-anchor="middle" class="big">15</text>
+    <text x="224" y="47" text-anchor="middle" class="big">≥</text>
+    <rect class="r" x="242" y="20" width="58" height="40" rx="6"/><text x="271" y="45" text-anchor="middle" class="n">СЛ 15</text>
+    <path class="thick red" d="M308 40L315 48L330 28"/>
+    <text x="30" y="88" text-anchor="middle">бросок</text><text x="114" y="88" text-anchor="middle">с листа</text>
+    <text x="188" y="88" text-anchor="middle">итог</text><text x="271" y="88" text-anchor="middle">от Мастера</text>
+  </svg>
+  <p>Сложность (коротко СЛ) называет Мастер. Число с листа зависит от того, что пробуешь: для прыжка одно, для обмана другое.</p>
+  <p>Итог ровно равен Сложности? Это успех.</p>
+  <h3>Двадцать и единица</h3>
+  <p>Если на к20 выпало 20, говорят «натуральная двадцатка», если 1, «натуральная единица». По правилам они особенные только в атаке: 20 всегда попадает и бьёт сильнее, 1 всегда промах. Многие Мастера и в других бросках делают из них яркий успех или смешной провал.</p>
+</section>
+
+<section class="pg" data-ch="1">
+  <h2>Лист персонажа</h2>
+  <p>Лист персонажа это карточка твоего героя. Всё, что нужно для бросков, записано на нём. Учить его не надо, достаточно знать, где что лежит.</p>
+  <svg class="sk" viewBox="0 0 336 240" role="img" aria-label="Схема листа персонажа с пятью отмеченными областями">
+    <rect class="p" x="6" y="6" width="196" height="228" rx="3"/>
+    <rect x="16" y="14" width="176" height="20"/><text x="22" y="29" class="sm">Бренна, плут 1 уровня</text>
+    <g>
+      <rect class="w" x="16" y="44" width="36" height="26"/><rect class="w" x="16" y="74" width="36" height="26"/>
+      <rect class="w" x="16" y="104" width="36" height="26"/><rect class="w" x="16" y="134" width="36" height="26"/>
+      <rect class="w" x="16" y="164" width="36" height="26"/><rect class="w" x="16" y="194" width="36" height="26"/>
+      <text x="34" y="62" text-anchor="middle" class="n">+0</text><text x="34" y="92" text-anchor="middle" class="n">+3</text>
+      <text x="34" y="122" text-anchor="middle" class="n">+1</text><text x="34" y="152" text-anchor="middle" class="n">+1</text>
+      <text x="34" y="182" text-anchor="middle" class="n">+2</text><text x="34" y="212" text-anchor="middle" class="n">−1</text>
+    </g>
+    <path class="w" d="M66 46L82 42L98 46V62Q98 72 82 78Q66 72 66 62Z"/><text x="82" y="64" text-anchor="middle" class="n">14</text>
+    <rect class="r" x="106" y="42" width="40" height="34" rx="3"/><text x="126" y="64" text-anchor="middle" class="n">9</text>
+    <rect x="154" y="42" width="38" height="34" rx="3"/><text x="173" y="64" text-anchor="middle" class="n">30</text>
+    <path class="faint" d="M72 92H184M72 102H184M72 112H184M72 122H184M72 132H184M72 142H184"/>
+    <circle cx="66" cy="92" r="2.4"/><circle class="ink" cx="66" cy="102" r="2.4"/><circle cx="66" cy="112" r="2.4"/>
+    <circle class="ink" cx="66" cy="122" r="2.4"/><circle cx="66" cy="132" r="2.4"/><circle cx="66" cy="142" r="2.4"/>
+    <rect x="62" y="158" width="130" height="46"/><path class="faint" d="M62 173H192M62 188H192"/>
+    <text x="66" y="170" class="sm">Рапира +5 1к8+3</text><text x="66" y="185" class="sm">Лук +5 1к6+3</text>
+    <circle class="inkr" cx="52" cy="44" r="7"/><text x="52" y="48" text-anchor="middle" class="n" style="fill:#f7eed9">1</text>
+    <circle class="inkr" cx="98" cy="42" r="7"/><text x="98" y="46" text-anchor="middle" class="n" style="fill:#f7eed9">2</text>
+    <circle class="inkr" cx="146" cy="42" r="7"/><text x="146" y="46" text-anchor="middle" class="n" style="fill:#f7eed9">3</text>
+    <circle class="inkr" cx="192" cy="92" r="7"/><text x="192" y="96" text-anchor="middle" class="n" style="fill:#f7eed9">4</text>
+    <circle class="inkr" cx="192" cy="158" r="7"/><text x="192" y="162" text-anchor="middle" class="n" style="fill:#f7eed9">5</text>
+    <g>
+      <circle class="inkr" cx="222" cy="60" r="8"/><text x="222" y="64" text-anchor="middle" class="n" style="fill:#f7eed9">1</text><text x="236" y="65">характеристики</text>
+      <circle class="inkr" cx="222" cy="94" r="8"/><text x="222" y="98" text-anchor="middle" class="n" style="fill:#f7eed9">2</text><text x="236" y="99">КД: защита</text>
+      <circle class="inkr" cx="222" cy="128" r="8"/><text x="222" y="132" text-anchor="middle" class="n" style="fill:#f7eed9">3</text><text x="236" y="133">хиты: здоровье</text>
+      <circle class="inkr" cx="222" cy="162" r="8"/><text x="222" y="166" text-anchor="middle" class="n" style="fill:#f7eed9">4</text><text x="236" y="167">навыки</text>
+      <circle class="inkr" cx="222" cy="196" r="8"/><text x="222" y="200" text-anchor="middle" class="n" style="fill:#f7eed9">5</text><text x="236" y="201">оружие и урон</text>
+    </g>
+  </svg>
+  <p class="small">КД значит «класс доспеха»: сколько нужно выбросить врагу, чтобы попасть по тебе. Хиты это запас здоровья. Число 30 рядом с ними: скорость в футах.</p>
+  <p class="note">Перед игрой обведи карандашом хиты, КД и свою лучшую атаку. Их спрашивают чаще всего.</p>
+</section>
+
+<section class="pg" data-ch="1">
+  <h2>Шесть характеристик</h2>
+  <p>Любой герой описан шестью числами, обычно от 8 до 18. Десять это средний человек.</p>
+  <table class="tbl">
+    <tr><td><b>Сила</b></td><td>поднять, толкнуть, ударить тяжёлым оружием</td></tr>
+    <tr><td><b>Ловкость</b></td><td>увернуться, прокрасться, выстрелить из лука</td></tr>
+    <tr><td><b>Телосложение</b></td><td>выносливость, здоровье, стойкость к ядам</td></tr>
+    <tr><td><b>Интеллект</b></td><td>знания, память, логика</td></tr>
+    <tr><td><b>Мудрость</b></td><td>внимательность, чутьё, интуиция</td></tr>
+    <tr><td><b>Харизма</b></td><td>убедить, обмануть, впечатлить</td></tr>
+  </table>
+  <h3>Модификатор</h3>
+  <p>В броски идёт не само число, а модификатор, маленькая прибавка рядом с ним. Считается так: вычти 10 и подели пополам с округлением вниз.</p>
+  <div class="strip">
+    <div>8-9<b>−1</b></div><div>10-11<b>+0</b></div><div>12-13<b>+1</b></div><div>14-15<b>+2</b></div>
+    <div>16-17<b>+3</b></div><div>18-19<b>+4</b></div><div>20<b>+5</b></div>
+  </div>
+  <p class="note">Считать самому не придётся: модификаторы уже вписаны в лист.</p>
+</section>
+
+<section class="pg" data-ch="1">
+  <h2>Что можно делать</h2>
+  <p>Всё, что мог бы сделать твой герой в этом мире. Меню с кнопками нет. Обычно игра состоит из трёх частей:</p>
+  <svg class="sk" viewBox="0 0 336 86" role="img" aria-label="Три части игры: общение, исследование, бой">
+    <path class="w" d="M34 12H78A6 6 0 0 1 84 18V40A6 6 0 0 1 78 46H52L42 56V46H34A6 6 0 0 1 28 40V18A6 6 0 0 1 34 12Z"/>
+    <circle class="ink" cx="46" cy="29" r="2"/><circle class="ink" cx="56" cy="29" r="2"/><circle class="ink" cx="66" cy="29" r="2"/>
+    <path class="w" d="M150 60V28A18 18 0 0 1 186 28V60Z"/><circle class="ink" cx="178" cy="42" r="2.6"/><path d="M142 60H194"/>
+    <path class="thick" d="M262 14L292 48M298 14L268 48"/>
+    <path d="M284 54L296 42M264 42L276 54M292 48L300 56M268 48L260 56"/>
+    <text x="56" y="80" text-anchor="middle">общение</text><text x="168" y="80" text-anchor="middle">исследование</text><text x="280" y="80" text-anchor="middle" class="red">бой</text>
+  </svg>
+  <div class="items">
+    <p><b>Общение.</b> Разговоры с жителями, торг, расспросы, обман. Многие задачи тут решаются вообще без драки.</p>
+    <p><b>Исследование.</b> Осмотреть комнату, найти ловушку, прочитать надпись, выбрать дорогу.</p>
+    <p><b>Бой.</b> Когда разговаривать уже поздно. Тогда игра идёт строго по очереди, об этом глава III.</p>
+  </div>
+  <p>Говорить можно от лица героя: «Эй, трактирщик, где мельник?» А можно со стороны: «Я спрашиваю трактирщика про мельника». Оба способа правильные.</p>
+</section>
+
+<section class="pg" data-ch="1">
+  <h2>Классы для первого раза</h2>
+  <p>Класс это профессия героя, от него зависит, что персонаж умеет. Точки показывают, сколько у класса правил, которые надо держать в голове.</p>
+  <div class="items">
+    <p><b>Воин</b> <span class="dots">●○○</span><br>Крепкий, хорошо бьёт, носит тяжёлые доспехи.</p>
+    <p><b>Варвар</b> <span class="dots">●○○</span><br>Впадает в ярость и держит любой удар.</p>
+    <p><b>Плут</b> <span class="dots">●●○</span><br>Скрытность, замки, ловушки, удар исподтишка.</p>
+    <p><b>Паладин</b> <span class="dots">●●○</span><br>Рыцарь с клятвой: доспех, меч и немного лечения.</p>
+    <p><b>Жрец</b> <span class="dots">●●○</span><br>Лечит союзников и защищает их силой своего бога.</p>
+    <p><b>Бард</b> <span class="dots">●●○</span><br>Музыкант и болтун, помогает союзникам и колдует.</p>
+    <p><b>Волшебник</b> <span class="dots">●●●</span><br>Много заклинаний, мало здоровья. Нужно выбирать с умом.</p>
+  </div>
+  <p class="note">В ваншоте героев обычно раздаёт Мастер. Бери того, кем хочется побыть, а не того, кто сильнее.</p>
+</section>
+
+<section class="pg" data-ch="1">
+  <h2>Если запомнить только пять вещей</h2>
+  <ol class="big">
+    <li><span>Говори, что делает твой герой. Как в книге, только от себя.</span></li>
+    <li><span>Кость бросай, когда просит Мастер.</span></li>
+    <li><span>Бросок почти всегда один: к20 плюс число с листа.</span></li>
+    <li><span>В бою ходят по очереди, и в свой ход ты делаешь одно главное дело.</span></li>
+    <li><span>Непонятно? Спрашивай. Вопрос Мастеру ничего не стоит и никому не мешает.</span></li>
+  </ol>
+  <div class="orn">✦ ✦ ✦</div>
+  <p>Дальше идёт глава для тех, кто уже что-то видел. Если хочется сразу понять бой, можно перескочить.</p>
+  <button class="go" data-go="ch3">К главе о бое ›</button>
+</section>
+
+<!-- ======== Глава II ======== -->
+<section class="pg" data-ch="2">
+  <div class="chap"><span class="chap-n">Глава II</span><span class="chap-for">для тех, кто играл в BG3 или смотрел</span></div>
+  <h2>Чем стол отличается от Baldur's Gate 3</h2>
+  <p class="small">BG3 построена на этих же правилах, поэтому многое знакомо: инициатива, действие и бонусное действие, ячейки заклинаний, отдых, преимущество. Но есть разница.</p>
+  <table class="tbl">
+    <tr><th>В игре</th><th>За столом</th></tr>
+    <tr><td><b>Выбор.</b> Делаешь то, для чего есть кнопка.</td><td>Делаешь всё, что придумаешь. Мастер решает, что бросать.</td></tr>
+    <tr><td><b>Прыжок.</b> Бонусное действие.</td><td>Часть обычного перемещения.</td></tr>
+    <tr><td><b>Высота.</b> +2 к попаданию сверху.</td><td>Общего правила нет, решает Мастер.</td></tr>
+    <tr><td><b>20 в разговоре.</b> Всегда успех.</td><td>По правилам ничего особенного, но многие Мастера засчитывают.</td></tr>
+    <tr><td><b>Неудача.</b> Можно загрузить сохранение.</td><td>Остаётся в истории навсегда.</td></tr>
+    <tr><td><b>Подсчёт.</b> Всё считает компьютер.</td><td>Складываешь сам и называешь итог вслух.</td></tr>
+  </table>
+</section>
+
+<section class="pg dense" data-ch="2">
+  <h2>Словарик стола</h2>
+  <div class="items small">
+    <p><b>Мастер.</b> Ведущий. Описывает мир, говорит за всех, кроме героев, судит по правилам.</p>
+    <p><b>НИП.</b> Неигровой персонаж: любой, за кого говорит Мастер.</p>
+    <p><b>Хиты.</b> Запас здоровья. На нуле герой падает.</p>
+    <p><b>КД.</b> Класс доспеха: число, которое нужно выбросить, чтобы по тебе попали.</p>
+    <p><b>СЛ.</b> Сложность проверки: число, которое нужно набрать.</p>
+    <p><b>Модификатор.</b> Прибавка к броску, берётся с листа.</p>
+    <p><b>Бонус мастерства.</b> Прибавка за то, чем герой владеет. На 1-4 уровнях это +2.</p>
+    <p><b>Спасбросок.</b> Бросок, чтобы избежать беды: яда, ловушки, огня.</p>
+    <p><b>Преимущество и помеха.</b> Бросаешь к20 дважды и берёшь больший или меньший.</p>
+    <p><b>Ячейка заклинания.</b> Единица магической силы. Тратится на заклинание и возвращается после долгого отдыха.</p>
+    <p><b>Круг заклинания.</b> Его сила: от 0 (заговор) до 9.</p>
+    <p><b>Раунд.</b> Все участники боя сходили по разу. В мире игры это около 6 секунд.</p>
+    <p><b>Ваншот.</b> Приключение на один вечер.</p>
+  </div>
+</section>
+
+<section class="pg" data-ch="2">
+  <h2>Преимущество и помеха</h2>
+  <p>Иногда обстоятельства на твоей стороне, иногда против. Тогда к20 бросают дважды.</p>
+  <svg class="sk" viewBox="0 0 336 118" role="img" aria-label="Преимущество: из 7 и 16 берёшь 16. Помеха: из 7 и 16 берёшь 7">
+    <use href="#d20" transform="translate(26 30)" class="p"/><text x="26" y="34" text-anchor="middle" class="n">7</text>
+    <use href="#d20" transform="translate(72 30)" class="p"/><text x="72" y="34" text-anchor="middle" class="n">16</text>
+    <path class="arr" d="M98 30H142"/>
+    <use href="#d20" transform="translate(170 30)" class="g"/><text x="170" y="34" text-anchor="middle" class="n">16</text>
+    <text x="200" y="26" class="red">преимущество:</text><text x="200" y="44">берёшь больший</text>
+    <use href="#d20" transform="translate(26 88)" class="p"/><text x="26" y="92" text-anchor="middle" class="n">7</text>
+    <use href="#d20" transform="translate(72 88)" class="p"/><text x="72" y="92" text-anchor="middle" class="n">16</text>
+    <path class="arr" d="M98 88H142"/>
+    <use href="#d20" transform="translate(170 88)" class="r"/><text x="170" y="92" text-anchor="middle" class="n">7</text>
+    <text x="200" y="84" class="red">помеха:</text><text x="200" y="102">берёшь меньший</text>
+  </svg>
+  <div class="items">
+    <p><b>Преимущество</b> бывает, когда союзник помогает, враг тебя не видит или лежит на земле рядом с тобой.</p>
+    <p><b>Помеха</b> бывает, когда ты отравлен, стреляешь в темноту или бьёшь из неудобной позы.</p>
+  </div>
+  <h3>Два правила</h3>
+  <p>Несколько преимуществ не складываются: всё равно бросаешь только две кости.</p>
+  <p>Если есть и преимущество, и помеха, они гасят друг друга, и бросается одна кость.</p>
+</section>
+
+<section class="pg" data-ch="2">
+  <h2>Три вида бросков к20</h2>
+  <p>Все они устроены одинаково: к20 плюс число, сравнить с целью. Разница в том, кто действует.</p>
+  <div class="items">
+    <p><b>Проверка.</b> Ты что-то пробуешь: залезть, убедить, вспомнить. Цель: Сложность, её выбирает Мастер. Звучит как «брось Атлетику».</p>
+    <p><b>Спасбросок.</b> Что-то пытается навредить тебе: яд, ловушка, огненный шар. Ты стараешься этого избежать. Звучит как «спасбросок Ловкости».</p>
+    <p><b>Атака.</b> Ты бьёшь или стреляешь. Цель: КД противника. Мастер обычно не называет КД, просто скажи ему свой итог.</p>
+  </div>
+  <h3>Какой бывает Сложность</h3>
+  <div class="strip six">
+    <div><b>5</b>очень легко</div><div><b>10</b>легко</div><div><b>15</b>средне</div>
+    <div><b>20</b>трудно</div><div><b>25</b>очень трудно</div><div><b>30</b>почти невозможно</div>
+  </div>
+  <p class="note">Если провал ничем не грозит и время не поджимает, Мастер может вообще не просить бросок.</p>
+</section>
+
+<section class="pg" data-ch="2">
+  <h2>Навыки и бонус мастерства</h2>
+  <p>Навык это то, чему герой может быть обучен. Каждый навык привязан к одной характеристике.</p>
+  <p class="formula">Навык = модификатор <i>+</i> бонус мастерства</p>
+  <p class="small">Бонус мастерства прибавляется, только если герой обучен навыку. На 1-4 уровнях он равен +2. Тот же бонус идёт к атакам привычным оружием и к спасброскам своего класса. Пример: у плута Ловкость +3, он обучен Скрытности, значит Скрытность у него 3 + 2 = +5.</p>
+  <table class="tbl">
+    <tr><td style="width:30%"><b>Сила</b></td><td>Атлетика</td></tr>
+    <tr><td><b>Ловкость</b></td><td>Акробатика, Ловкость рук, Скрытность</td></tr>
+    <tr><td><b>Интеллект</b></td><td>Анализ, История, Магия, Природа, Религия</td></tr>
+    <tr><td><b>Мудрость</b></td><td>Восприятие, Выживание, Медицина, Проницательность, Уход за животными</td></tr>
+    <tr><td><b>Харизма</b></td><td>Выступление, Запугивание, Обман, Убеждение</td></tr>
+  </table>
+  <p class="small">У Телосложения навыков нет: оно отвечает за хиты и выносливость.</p>
+  <p class="note">Чаще всего просят Восприятие. Найди его на листе заранее.</p>
+</section>
+
+<section class="pg" data-ch="2">
+  <h2>Заклинания коротко</h2>
+  <p>Если твой герой колдует, у него на листе есть список заклинаний. Они бывают двух видов.</p>
+  <div class="items">
+    <p><b>Заговоры.</b> Простые заклинания нулевого круга. Их можно творить сколько угодно раз: например, огненный снаряд или свет.</p>
+    <p><b>Заклинания 1 круга и выше.</b> Каждое тратит одну ячейку. У волшебника 1 уровня всего две ячейки на день. Они возвращаются после долгого отдыха.</p>
+  </div>
+  <h3>Концентрация</h3>
+  <p>Некоторые заклинания действуют, пока герой держит на них внимание. Держать можно только одно такое заклинание сразу. Если героя ранили, он бросает спасбросок Телосложения со Сложностью 10 или половиной урона, если она больше. Провал: заклинание рассеивается.</p>
+  <h3>Правило попроще</h3>
+  <p>За один ход трать не больше одной ячейки. Остальные тонкости спроси у Мастера, когда понадобится.</p>
+  <p class="note">Заклинание можно сотворить из ячейки выше его круга. Тогда оно часто сильнее.</p>
+</section>
+
+<section class="pg" data-ch="2">
+  <h2>Хиты, лечение и отдых</h2>
+  <p>Хиты показывают, сколько ещё ударов герой выдержит. Это не раны: пока хитов больше нуля, герой сражается в полную силу.</p>
+  <div class="items">
+    <p><b>Лечение.</b> Заклинания, умения и зелья возвращают хиты, но не больше максимума. Обычное зелье лечения восстанавливает 2к4+2.</p>
+    <p><b>Кости хитов.</b> Их столько же, сколько уровней у героя. Какая кость, зависит от класса: у волшебника к6, у воина к10, у варвара к12.</p>
+    <p><b>Короткий отдых.</b> Час передышки. Можно потратить кости хитов: бросить их, прибавить модификатор Телосложения и вылечить столько хитов. Некоторые умения тоже возвращаются.</p>
+    <p><b>Долгий отдых.</b> Восемь часов, не чаще раза в сутки. Возвращаются все хиты, все ячейки заклинаний и почти все умения.</p>
+  </div>
+  <p class="note">В ваншоте отдыхать удаётся редко. Береги ячейки и зелья до финала.</p>
+</section>
+
+<!-- ======== Глава III ======== -->
+<section class="pg" data-ch="3">
+  <div class="chap"><span class="chap-n">Глава III</span><span class="chap-for">для всех, кто хочет понять бой</span></div>
+  <h2>Бой начинается с инициативы</h2>
+  <p>Когда начинается схватка, Мастер говорит: «Бросайте инициативу». Каждый бросает к20 и прибавляет модификатор Ловкости. За врагов бросает Мастер.</p>
+  <svg class="sk" viewBox="0 0 336 146" role="img" aria-label="Порядок ходов: 18 плут, 15 гоблины, 12 жрец, 9 воин, 6 волк, затем новый раунд">
+    <rect class="w" x="34" y="4" width="198" height="22" rx="4"/><rect class="r" x="34" y="32" width="198" height="22" rx="4"/>
+    <rect class="w" x="34" y="60" width="198" height="22" rx="4"/><rect class="w" x="34" y="88" width="198" height="22" rx="4"/>
+    <rect class="r" x="34" y="116" width="198" height="22" rx="4"/>
+    <circle class="p" cx="16" cy="15" r="11"/><circle class="p" cx="16" cy="43" r="11"/><circle class="p" cx="16" cy="71" r="11"/>
+    <circle class="p" cx="16" cy="99" r="11"/><circle class="p" cx="16" cy="127" r="11"/>
+    <text x="16" y="19" text-anchor="middle" class="n">18</text><text x="16" y="47" text-anchor="middle" class="n">15</text>
+    <text x="16" y="75" text-anchor="middle" class="n">12</text><text x="16" y="103" text-anchor="middle" class="n">9</text>
+    <text x="16" y="131" text-anchor="middle" class="n">6</text>
+    <text x="42" y="20">Бренна, плут</text><text x="42" y="48">Гоблины</text><text x="42" y="76">Отец Годрик, жрец</text>
+    <text x="42" y="104">Торн, воин</text><text x="42" y="132">Волк</text>
+    <text x="226" y="20" text-anchor="end" class="sm">игрок</text><text x="226" y="48" text-anchor="end" class="sm red">Мастер</text>
+    <text x="226" y="76" text-anchor="end" class="sm">игрок</text><text x="226" y="104" text-anchor="end" class="sm">игрок</text>
+    <text x="226" y="132" text-anchor="end" class="sm red">Мастер</text>
+    <path class="arr" d="M238 128Q276 128 276 72Q276 15 240 15"/>
+    <text x="284" y="68">новый</text><text x="284" y="84">раунд</text>
+  </svg>
+  <p>Ходят от большего числа к меньшему. Когда сходили все, раунд заканчивается, и очередь начинается сначала.</p>
+  <p class="note">Пока ходят другие, продумай свой ход. Тогда бой идёт живо.</p>
+</section>
+
+<section class="pg" data-ch="3">
+  <h2>Что есть в твоём ходе</h2>
+  <svg class="sk" viewBox="0 0 336 176" role="img" aria-label="Ход: одно действие, одно бонусное действие, перемещение на 6 клеток, одно взаимодействие с предметом; отдельно одна реакция за раунд">
+    <rect class="p" x="4" y="4" width="328" height="114" rx="10"/>
+    <text x="16" y="24" class="red">твой ход</text>
+    <circle class="g" cx="44" cy="58" r="20"/><text x="44" y="62" text-anchor="middle" class="n">×1</text>
+    <polygon class="w" points="112,36 135,76 89,76"/><text x="112" y="68" text-anchor="middle" class="n">×1</text>
+    <rect class="w" x="158" y="44" width="90" height="28" rx="14"/>
+    <path class="faint" d="M173 44V72M188 44V72M203 44V72M218 44V72M233 44V72"/>
+    <rect class="w" x="270" y="42" width="40" height="32" rx="4"/><text x="290" y="62" text-anchor="middle" class="n">×1</text>
+    <text x="44" y="98" text-anchor="middle">действие</text>
+    <text x="112" y="98" text-anchor="middle">бонусное</text><text x="112" y="112" text-anchor="middle">действие</text>
+    <text x="203" y="98" text-anchor="middle">перемещение</text><text x="203" y="112" text-anchor="middle">6 клеток</text>
+    <text x="290" y="98" text-anchor="middle">предмет</text>
+    <polygon class="r" points="36,132 54,150 36,168 18,150"/>
+    <text x="68" y="146">реакция: одна за раунд,</text><text x="68" y="164">может сработать и в чужой ход</text>
+  </svg>
+  <p>В свой ход ты можешь переместиться и совершить одно <b>действие</b>. Если у тебя есть умение с пометкой «бонусное действие», его можно сделать в этот же ход. Одно касание предмета бесплатно: открыть дверь, достать меч.</p>
+  <p>Порядок любой, а перемещение можно делить: пройти три клетки, ударить, пройти ещё три.</p>
+  <p class="small">Тем, кто играл в BG3: действие там зелёный кружок, бонусное действие оранжевый треугольник. Тут то же самое, только в голове.</p>
+  <p class="note">Короткую фразу в бою сказать можно всегда, это ничего не стоит.</p>
+</section>
+
+<section class="pg" data-ch="3">
+  <h2>Главные действия</h2>
+  <p>В свой ход выбираешь одно из них.</p>
+  <div class="items small">
+    <p><b>Атака.</b> Удар оружием или выстрел. Подробно на следующей странице.</p>
+    <p><b>Заклинание.</b> Сотворить заклинание, которое творится действием.</p>
+    <p><b>Рывок.</b> Пройти ещё столько же, сколько позволяет скорость.</p>
+    <p><b>Отход.</b> Уйти от врага так, чтобы он не смог ударить тебе вслед.</p>
+    <p><b>Уклонение.</b> До твоего следующего хода все атаки по тебе идут с помехой.</p>
+    <p><b>Помощь.</b> Союзник получает преимущество на следующую проверку или атаку.</p>
+    <p><b>Спрятаться.</b> Если есть где укрыться. Бросаешь Скрытность.</p>
+    <p><b>Подготовка.</b> Выбираешь действие и условие: «если гоблин выйдет из-за угла, стреляю». Оно сработает реакцией.</p>
+    <p><b>Поиск.</b> Осмотреться внимательно: найти спрятавшегося врага или тайный рычаг.</p>
+    <p><b>Использовать предмет.</b> Бросить флакон с маслом, зажечь факел, дёрнуть рычаг.</p>
+  </div>
+  <p>Можно попробовать и то, чего нет в списке: опрокинуть стол, перерезать верёвку люстры. Скажи Мастеру, что хочешь сделать, он решит, что бросать.</p>
+</section>
+
+<section class="pg" data-ch="3">
+  <h2>Атака шаг за шагом</h2>
+  <svg class="sk" viewBox="0 0 336 148" role="img" aria-label="Атака: выбери цель, брось к20 плюс бонус атаки, сравни с КД цели, при попадании брось урон">
+    <rect class="w" x="4" y="4" width="156" height="54" rx="8"/>
+    <text x="82" y="26" text-anchor="middle">1. выбери цель</text><text x="82" y="44" text-anchor="middle">и оружие</text>
+    <rect class="w" x="176" y="4" width="156" height="54" rx="8"/>
+    <text x="254" y="26" text-anchor="middle">2. к20 + бонус</text><text x="254" y="44" text-anchor="middle">атаки с листа</text>
+    <rect class="r" x="176" y="88" width="156" height="54" rx="8"/>
+    <text x="254" y="110" text-anchor="middle">3. итог не меньше</text><text x="254" y="128" text-anchor="middle">КД цели?</text>
+    <rect class="g" x="4" y="88" width="156" height="54" rx="8"/>
+    <text x="82" y="110" text-anchor="middle">4. да: кость урона</text><text x="82" y="128" text-anchor="middle">нет: промах</text>
+    <path class="arr" d="M162 31H172"/><path class="arr" d="M254 60V84"/><path class="arr" d="M174 115H164"/>
+  </svg>
+  <h3>Пример</h3>
+  <p>Торн бьёт гоблина длинным мечом. На листе у меча написано: +5 к попаданию, урон 1к8+3.</p>
+  <p class="num">На к20 выпало 12. Итог 12 + 5 = 17. КД гоблина 15, попал. Урон: на к8 выпало 4, плюс 3, всего 7. У гоблина было 7 хитов, он падает.</p>
+  <h3>Критическое попадание</h3>
+  <p>Натуральная 20 на атаке всегда попадает, и кости урона бросаются дважды: вместо 1к8+3 будет 2к8+3. Модификатор не удваивается. Натуральная 1 на атаке всегда промах.</p>
+</section>
+
+<section class="pg" data-ch="3">
+  <h2>Карта и клетки</h2>
+  <p>Бой часто играют на карте в клетку. Одна клетка это 5 футов, около полутора метров. Обычная скорость героя 30 футов, то есть 6 клеток за ход.</p>
+  <svg class="sk" viewBox="0 0 336 146" role="img" aria-label="Карта: воин проходит 4 клетки к гоблину, вокруг гоблина красная зона его удара">
+    <rect class="p" x="8" y="8" width="234" height="130"/>
+    <rect class="r dash" x="138" y="34" width="78" height="78"/>
+    <path class="faint" d="M34 8V138M60 8V138M86 8V138M112 8V138M138 8V138M164 8V138M190 8V138M216 8V138M8 34H242M8 60H242M8 86H242M8 112H242"/>
+    <path class="arr thick" d="M58 73H142"/>
+    <circle class="g" cx="47" cy="73" r="10"/><text x="47" y="77" text-anchor="middle" class="n">В</text>
+    <circle class="r" cx="177" cy="73" r="10"/><text x="177" y="77" text-anchor="middle" class="n">Г</text>
+    <text x="99" y="62" text-anchor="middle" class="halo">4 клетки</text>
+    <text x="252" y="26">1 клетка</text><text x="252" y="42">= 5 футов</text>
+    <text x="252" y="70">скорость 30</text><text x="252" y="86">= 6 клеток</text>
+    <rect class="r dash" x="252" y="100" width="14" height="14"/><text x="272" y="112">зона</text><text x="252" y="130">удара врага</text>
+  </svg>
+  <div class="items small">
+    <p><b>Ближний бой.</b> Мечом можно бить того, кто стоит в соседней клетке, в том числе по диагонали.</p>
+    <p><b>Удар вслед.</b> Если выходишь из соседней с врагом клетки, он может потратить реакцию и ударить. В правилах это называется «провоцированная атака». Действие Отход её отменяет.</p>
+    <p><b>Укрытие.</b> За бочкой или краем стены: половинное укрытие даёт +2 к КД, на три четверти +5.</p>
+    <p><b>Трудная местность.</b> Кусты, обломки, лёд: каждая клетка стоит двух.</p>
+  </div>
+</section>
+
+<section class="pg" data-ch="3">
+  <h2>Пример одного раунда</h2>
+  <p class="small">Отряд наткнулся на двух гоблинов и волка у старой мельницы. Все бросили инициативу.</p>
+  <div class="turns num">
+    <p><span class="ini">18</span><span><b>Бренна, плут.</b> Стреляет из короткого лука: 14 + 5 = 19 против КД 15, попала. Урон 1к6+3 = 7, первый гоблин падает.</span></p>
+    <p><span class="ini foe">15</span><span><b>Гоблин.</b> Второй гоблин подбегает к жрецу и бьёт саблей: 9 + 4 = 13. КД жреца 18, промах.</span></p>
+    <p><span class="ini">12</span><span><b>Отец Годрик, жрец.</b> Творит заговор «Священное пламя». Гоблин бросает спасбросок Ловкости: 8 + 2 = 10 против Сложности 13, провал. Урон 1к8 = 5, у гоблина остаётся 2 хита.</span></p>
+    <p><span class="ini">9</span><span><b>Торн, воин.</b> Проходит 4 клетки и бьёт мечом: 12 + 5 = 17, попал. Второй гоблин падает.</span></p>
+    <p><span class="ini foe">6</span><span><b>Волк.</b> Бросается на Торна, на кости 20. Критическое попадание: вместо 2к4+2 бросается 4к4+2, выходит 13 урона.</span></p>
+  </div>
+  <p>Раунд закончился. Следующий снова начнёт Бренна.</p>
+  <p class="note">Заметь: каждый ход занял одну-две фразы. Так и выглядит бой за столом.</p>
+</section>
+
+<section class="pg dense" data-ch="3">
+  <h2>Состояния</h2>
+  <p class="small">Иногда героя сбивают с ног, пугают или травят. Мастер назовёт состояние, а здесь написано, что оно значит.</p>
+  <div class="items small">
+    <p><b>Лежит ничком.</b> Можно только ползти. Встать стоит половину скорости. Твои атаки идут с помехой. Атаки по тебе вблизи с преимуществом, издали с помехой.</p>
+    <p><b>Схвачен.</b> Скорость 0, пока не вырвешься.</p>
+    <p><b>Отравлен.</b> Помеха на атаки и проверки.</p>
+    <p><b>Ослеплён.</b> Твои атаки с помехой, атаки по тебе с преимуществом. Всё, что требует зрения, проваливается.</p>
+    <p><b>Испуган.</b> Пока видишь источник страха, атаки и проверки с помехой, и подойти к нему по своей воле нельзя.</p>
+    <p><b>Без сознания.</b> Падаешь ничком и роняешь всё из рук. Атаки по тебе с преимуществом, а удар вблизи всегда критический.</p>
+  </div>
+  <p class="note">Не надо учить это заранее. Когда случится, открой эту страницу.</p>
+</section>
+
+<section class="pg" data-ch="3">
+  <h2>Если хиты упали до нуля</h2>
+  <p>Герой падает без сознания, но ещё не умер. Теперь в начале каждого своего хода игрок бросает <b>спасбросок от смерти</b>: чистый к20 без прибавок.</p>
+  <svg class="sk" viewBox="0 0 336 80" role="img" aria-label="Отметки: два успеха из трёх и один провал из трёх">
+    <text x="4" y="30">успехи</text>
+    <circle class="g" cx="100" cy="25" r="10"/><circle class="g" cx="130" cy="25" r="10"/><circle class="p" cx="160" cy="25" r="10"/>
+    <text x="4" y="66" class="red">провалы</text>
+    <circle class="r" cx="100" cy="60" r="10"/><circle class="p" cx="130" cy="60" r="10"/><circle class="p" cx="160" cy="60" r="10"/>
+    <text x="190" y="30">3 успеха: жив,</text><text x="190" y="46">но без сознания</text>
+    <text x="190" y="66" class="red">3 провала: смерть</text>
+  </svg>
+  <div class="items small">
+    <p><b>10 и больше</b> это успех, <b>9 и меньше</b> провал.</p>
+    <p><b>Натуральная 1:</b> сразу два провала. <b>Натуральная 20:</b> герой приходит в себя с 1 хитом.</p>
+    <p>Урон по лежащему засчитывается как провал, критический как два.</p>
+  </div>
+  <h3>Как спасти друга</h3>
+  <p>Любое лечение, даже на 1 хит, поднимает героя на ноги. Без магии его можно стабилизировать проверкой Медицины со Сложностью 10.</p>
+  <p class="small">Редкий случай: если урон уронил героя до нуля и то, что осталось от урона, не меньше максимума его хитов, герой погибает сразу.</p>
+  <p class="note">В ваншотах для новичков Мастер редко доводит до смерти. Но кубики бывают злыми.</p>
+</section>
+
+<!-- ======== Глава IV ======== -->
+<section class="pg" data-ch="4">
+  <div class="chap"><span class="chap-n">Глава IV</span><span class="chap-for">для тех, кто садится играть</span></div>
+  <h2>Что такое ваншот</h2>
+  <p class="dc">Ваншот (от английского one-shot) это приключение, которое начинается и заканчивается за один вечер. Обычно оно длится 3-5 часов.</p>
+  <p>Героев часто заранее готовит Мастер: вы получаете листы, выбираете, кто кем будет, и сразу играете. Уровень героев обычно от 1 до 3.</p>
+  <svg class="sk" viewBox="0 0 336 112" role="img" aria-label="Путь приключения: завязка, дорога, испытание, финал">
+    <path class="dash" d="M20 88Q66 38 112 62T200 42T306 70"/>
+    <circle class="p" cx="20" cy="88" r="6"/><circle class="p" cx="112" cy="62" r="6"/><circle class="p" cx="200" cy="42" r="6"/>
+    <path class="thick red" d="M298 62L314 78M314 62L298 78"/>
+    <text x="8" y="108">завязка</text><text x="112" y="86" text-anchor="middle">дорога</text>
+    <text x="200" y="26" text-anchor="middle">испытание</text><text x="306" y="100" text-anchor="middle" class="red">финал</text>
+  </svg>
+  <p>Чаще всего история устроена так: завязка, дорога с загадками и встречами, серьёзное испытание и финальный бой. Но Мастер может и удивить.</p>
+  <p class="small"><b>Что взять:</b> кубики, если есть, карандаш с ластиком и что-нибудь к чаю. Лист героя обычно даёт Мастер.</p>
+</section>
+
+<section class="pg" data-ch="4">
+  <h2>Как пройдёт вечер</h2>
+  <p class="small">Примерный план на четыре часа. У каждого стола свой темп.</p>
+  <div class="time">
+    <p><span>0:00</span><span><b>Сбор.</b> Чай, кубики на стол, телефоны в сторону.</span></p>
+    <p><span>0:15</span><span><b>Знакомство с героями.</b> Прочитай свой лист: кто ты, что умеешь, какие у тебя заклинания. Всё непонятное спроси.</span></p>
+    <p><span>0:30</span><span><b>Начало.</b> Мастер описывает, где вы. Каждый в двух фразах представляет своего героя.</span></p>
+    <p><span>1:30</span><span><b>Перерыв</b> минут на десять.</span></p>
+    <p><span>1:45</span><span><b>Середина истории.</b> Поиски, разговоры, пара стычек.</span></p>
+    <p><span>3:00</span><span><b>Финальный бой.</b> Обычно самая долгая сцена вечера.</span></p>
+    <p><span>3:45</span><span><b>Разговор после игры.</b> Что понравилось, что было непонятно, хотите ли ещё.</span></p>
+  </div>
+  <p class="note">Первые полчаса всегда идут медленно. Это нормально, потом разгонитесь.</p>
+</section>
+
+<section class="pg" data-ch="4">
+  <h2>Правила хорошего стола</h2>
+  <div class="items small">
+    <p><b>Договоритесь о границах.</b> До игры скажите, каких тем в ней быть не должно. Кому-то неприятны пауки, кому-то жестокость. Это нормально.</p>
+    <p><b>Слово «стоп».</b> Любой может остановить неприятную сцену без объяснений, и история пойдёт иначе.</p>
+    <p><b>По очереди.</b> Не перебивайте и оставляйте место тем, кто говорит тише.</p>
+    <p><b>Свой герой.</b> Советовать другим можно, решать за чужого героя нельзя.</p>
+    <p><b>Споры о правилах.</b> Во время игры решает Мастер. Обсудить можно после.</p>
+    <p><b>Герой знает не всё.</b> Если твой герой был в другой комнате, он не слышал разговор, даже если ты его слышал.</p>
+    <p><b>Подхватывай.</b> Кто-то придумал смешной план? Помоги ему и добавь своё, так интереснее всем.</p>
+    <p><b>Неудача это не плохо.</b> Провалы часто дают лучшие истории вечера.</p>
+  </div>
+</section>
+
+<section class="pg" data-ch="4">
+  <h2>Если не знаешь, что сказать</h2>
+  <p>Начни с одной из этих фраз. Они подходят почти к любой сцене.</p>
+  <div class="say">
+    <p>«Я осматриваюсь. Что я вижу?»</p>
+    <p>«Что мой герой знает про это место?»</p>
+    <p>«Я подхожу к нему и спрашиваю про…»</p>
+    <p>«Можно я попробую…?»</p>
+    <p>«Я помогаю ей: держу верёвку.»</p>
+    <p>«Если дверь откроется, я сразу стреляю.»</p>
+    <p>«Я жду и смотрю, что будет.»</p>
+  </div>
+  <h3>Главный совет</h3>
+  <p>Говори, чего хочешь добиться, а не какой бросок сделать. Не «проверяю Атлетику», а «пытаюсь залезть на стену». Мастер сам скажет, что бросать.</p>
+</section>
+
+<!-- ======== Шпаргалка ======== -->
+<section class="pg" data-ch="5">
+  <h2>Шпаргалка</h2>
+  <div class="cheat">
+    <div class="wide"><h4>Бросок</h4>к20 + число с листа. Итог не меньше цели: успех.</div>
+    <div><h4>Цель</h4>Проверка и спасбросок: Сложность. Атака: КД врага.</div>
+    <div><h4>Преимущество</h4>Два к20, берёшь больший. Помеха: меньший. Вместе гасят друг друга.</div>
+    <div><h4>Твой ход</h4>Перемещение, одно действие, бонусное действие если есть, один предмет.</div>
+    <div><h4>Реакция</h4>Одна за раунд, можно в чужой ход. Например, удар вслед.</div>
+    <div><h4>Атака</h4>к20 + бонус против КД. Попал: кость урона + модификатор.</div>
+    <div><h4>Двадцать</h4>В атаке: попадание, кости урона дважды. Единица: промах.</div>
+    <div><h4>Ноль хитов</h4>Без сознания. Каждый ход к20: 10+ успех. Три успеха или три провала.</div>
+    <div><h4>Отдых</h4>Короткий: час, кости хитов. Долгий: 8 часов, всё возвращается.</div>
+    <div class="wide"><h4>Не знаешь, что делать</h4>«Я осматриваюсь. Что я вижу?» И спроси Мастера.</div>
+  </div>
+</section>
+
+<!-- 32: задний форзац -->
+<section class="pg board inner">
+  <div class="ep">
+    <div class="plate">
+      <h3>Заметки с первой игры</h3>
+      <div class="lines"></div>
+      <p class="hand">Пусть кубики будут добры!</p>
+    </div>
+  </div>
+</section>
+
+<!-- 33: задняя обложка -->
+<section class="pg board cover-back">
+  <div class="frame emb">
+    <svg class="emblem" viewBox="-60 -60 120 120" aria-hidden="true" style="width:70px;height:70px">
+      <polygon points="0,-54 46.8,-27 46.8,27 0,54 -46.8,27 -46.8,-27"/>
+      <polygon points="0,-28 24.2,14 -24.2,14"/>
+      <path d="M0 -28L0 -54M0 -28L46.8 -27M0 -28L-46.8 -27M24.2 14L46.8 -27M24.2 14L46.8 27M24.2 14L0 54M-24.2 14L-46.8 -27M-24.2 14L-46.8 27M-24.2 14L0 54"/>
+    </svg>
+    <div class="cv-sub">Пусть кубики будут добры,<br>а Мастер справедлив</div>
+  </div>
+</section>
+
+</div>
+
+<script>
+(() => {
+  const PW = 400, PH = 580, M = 14;          // размеры страницы в пикселях книги, совпадают с --pw/--ph
+  const HEADS = {0:'Оглавление', 1:'Глава I · С нуля', 2:'Глава II · Знакомым понаслышке', 3:'Глава III · Бой', 4:'Глава IV · Первый вечер', 5:'Приложение'};
+  const BADGES = {1:'уровень 0', 2:'уровень 1', 3:'бой', 4:'за столом', 5:'всё сразу'};
+
+  const pages = [...document.querySelectorAll('#pages > section')];
+  const n = pages.length / 2;               // листов; у каждого две стороны
+  const stage = document.getElementById('stage');
+  const book = document.getElementById('book');
+  const chStart = {};
+
+  pages.forEach((pg, i) => {
+    const ch = pg.dataset.ch;
+    if (ch === undefined) return;
+    if (!(ch in chStart)) chStart[ch] = i;
+    const run = document.createElement('div');
+    run.className = 'run';
+    run.innerHTML = `<span>${HEADS[ch]}</span>` + (BADGES[ch] ? `<span class="badge">${BADGES[ch]}</span>` : '');
+    const body = document.createElement('div');
+    body.className = 'body';
+    body.append(...pg.childNodes);
+    const folio = document.createElement('div');
+    folio.className = 'folio';
+    folio.textContent = `· ${i - 1} ·`;
+    pg.append(run, body, folio);
+  });
+
+  const leaves = [];
+  for (let k = 0; k < n; k++) {
+    const el = document.createElement('div');
+    el.className = 'leaf';
+    const f = pages[2 * k], b = pages[2 * k + 1];
+    if (f.classList.contains('board')) el.classList.add('hard');
+    f.classList.add('face', 'front');
+    b.classList.add('face', 'back');
+    el.append(f, b);
+    book.append(el);
+    leaves.push({el, flipped: false, t1: 0, t2: 0});
+  }
+  document.getElementById('pages').remove();
+
+  const target = v => String(v).startsWith('ch') ? chStart[String(v).slice(2)] : +v;
+  document.querySelectorAll('.path[data-go]').forEach(b => b.querySelector('.pn').textContent = target(b.dataset.go) - 1);
+
+  let at = 0, side = 'R', portrait = false, s = 1, top = n + 10;
+
+  function settleZ(k) { leaves[k].el.style.zIndex = leaves[k].flipped ? k + 1 : n - k; }
+
+  function turn(k, flipped, delay, dur) {
+    const L = leaves[k];
+    L.flipped = flipped;
+    clearTimeout(L.t1); clearTimeout(L.t2);
+    L.t1 = setTimeout(() => {
+      L.el.style.transitionDuration = dur + 'ms';
+      L.el.style.zIndex = ++top;            // летящий лист поверх всех
+      L.el.classList.toggle('flipped', flipped);
+      L.t2 = setTimeout(() => settleZ(k), dur);
+    }, delay);
+  }
+
+  function flipTo(tAt) {
+    const count = Math.abs(tAt - at);
+    const dur = count > 1 ? 600 : 850, step = count > 1 ? Math.min(90, 600 / count) : 0;
+    if (tAt > at) for (let k = at, i = 0; k < tAt; k++, i++) turn(k, true, i * step, dur);
+    else for (let k = at - 1, i = 0; k >= tAt; k--, i++) turn(k, false, i * step, dur);
+    at = tAt;
+    render();
+  }
+
+  function goPage(p) {
+    p = Math.max(0, Math.min(2 * n - 1, p));
+    side = p % 2 ? 'L' : 'R';
+    flipTo(p % 2 ? (p + 1) / 2 : p / 2);
+  }
+  function next() {
+    if (portrait && side === 'L' && at < n) { side = 'R'; render(); }
+    else if (at < n) { side = 'L'; flipTo(at + 1); }
+  }
+  function prev() {
+    if (portrait && side === 'R' && at > 0) { side = 'L'; render(); }
+    else if (at > 0) { side = 'R'; flipTo(at - 1); }
+  }
+
+  function visible() {
+    const L = at > 0 ? 2 * at - 1 : null, R = at < n ? 2 * at : null;
+    if (!portrait) return [L, R].filter(v => v !== null);
+    if (at === 0) side = 'R';
+    if (at === n) side = 'L';
+    return [side === 'L' ? L : R];
+  }
+
+  function render() {
+    const vis = visible();
+    let tx = portrait ? (side === 'R' ? -PW : 0) : (at === 0 ? -PW / 2 : at === n ? PW / 2 : 0);
+    book.style.transform = `scale(${s}) translate(${tx + M}px, ${M}px)`;
+    pages.forEach((pg, i) => pg.inert = !vis.includes(i));
+
+    const folios = vis.filter(p => pages[p].dataset.ch !== undefined).map(p => p - 1);
+    document.getElementById('where').textContent = folios.length ? 'стр. ' + folios.join(' и ')
+      : vis.includes(0) ? 'Обложка' : vis.includes(2 * n - 1) ? 'Задняя обложка' : 'Форзац';
+    const last = Math.max(...vis);
+    const ch = at === 0 ? 'cover' : pages[last].dataset.ch ?? pages[Math.min(...vis)].dataset.ch;
+    document.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-current', String(c.dataset.chip === ch)));
+    document.getElementById('prev').disabled = at === 0;
+    document.getElementById('next').disabled = at === n;
+  }
+
+  function layout() {
+    portrait = innerWidth < 720;
+    stage.classList.toggle('portrait', portrait);
+    const barH = document.querySelector('.bar').offsetHeight;
+    const w = innerWidth - 32, h = Math.max(innerHeight - barH - 50, 420);
+    const visW = (portrait ? PW : 2 * PW) + 2 * M;
+    s = Math.min(w / visW, h / (PH + 2 * M), 1.45);
+    stage.style.width = visW * s + 'px';
+    stage.style.height = (PH + 2 * M) * s + 'px';
+    render();
+  }
+
+  // Открыть сразу нужную страницу по якорю: #glava1..#glava4, #shpargalka, #p12
+  const m = location.hash.match(/^#(?:glava([1-4])|p(\d+)|(shpargalka))$/);
+  const startPage = m ? (m[1] ? chStart[m[1]] : m[2] ? +m[2] : chStart[5]) : 0;
+  const sp = Math.max(0, Math.min(2 * n - 1, startPage));
+  at = sp % 2 ? (sp + 1) / 2 : sp / 2;
+  side = sp % 2 ? 'L' : 'R';
+  leaves.forEach((L, k) => { L.flipped = k < at; L.el.classList.toggle('flipped', L.flipped); settleZ(k); });
+  layout();
+  requestAnimationFrame(() => requestAnimationFrame(() => book.classList.remove('instant')));
+
+  addEventListener('resize', layout);
+  document.getElementById('next').addEventListener('click', next);
+  document.getElementById('prev').addEventListener('click', prev);
+  document.addEventListener('click', e => {
+    const b = e.target.closest('[data-go]');
+    if (b) goPage(target(b.dataset.go));
+  });
+  document.addEventListener('keydown', e => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (e.key === 'ArrowRight' || e.key === 'PageDown') { e.preventDefault(); next(); }
+    else if (e.key === 'ArrowLeft' || e.key === 'PageUp') { e.preventDefault(); prev(); }
+    else if (e.key === 'Home') goPage(0);
+    else if (e.key === 'End') goPage(2 * n - 1);
+  });
+
+  let down = null;
+  stage.addEventListener('pointerdown', e => { down = {x: e.clientX, y: e.clientY}; });
+  stage.addEventListener('pointercancel', () => { down = null; });
+  stage.addEventListener('pointerup', e => {
+    if (!down) return;
+    const dx = e.clientX - down.x, dy = e.clientY - down.y;
+    down = null;
+    if (e.target.closest('button, a')) return;
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) return dx < 0 ? next() : prev();
+    if (Math.abs(dx) > 6 || Math.abs(dy) > 6 || String(getSelection())) return;
+    const face = e.target.closest('.face');
+    if (!face) return;
+    if (portrait) {
+      const r = face.getBoundingClientRect();
+      (e.clientX - r.left) / r.width < 0.3 ? prev() : next();
+    } else face.classList.contains('front') ? next() : prev();
+  });
+})();
+</script>
+</body>
+</html>
