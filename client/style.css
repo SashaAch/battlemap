@@ -1,7 +1,12 @@
-/* Layout. Interface colours come only from theme variables (themes.css). */
+/* Layout of variant V (R45): the map fills the window, the panels float over it. Interface colours come only from
+   theme variables (themes.css). No inline styles: the Content-Security-Policy forbids them in the markup. */
 
 * {
   box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
 }
 
 html,
@@ -11,14 +16,10 @@ body {
   overflow: hidden;
 }
 
-/* The canvas fills the window; panels sit over it in a grid, the empty middle cell lets input through. */
 body {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-rows: auto 1fr auto;
-  font: 14px/1.3 system-ui, sans-serif;
+  font: 14px/1.35 "Golos Text", system-ui, sans-serif;
   color: var(--ui-fg);
-  background: var(--board-void);
+  background: var(--ui-page);
 }
 
 #board {
@@ -30,49 +31,441 @@ body {
   touch-action: none;
 }
 
-.toolbar,
-.palette,
-.status {
-  position: relative;
-  background: var(--ui-bg);
-  border-color: var(--ui-border);
-  border-style: solid;
-  border-width: 0;
+/* ---- common controls ---- */
+
+button,
+select,
+input {
+  font: inherit;
+  color: var(--ui-fg);
 }
 
-.toolbar {
-  grid-column: 1 / -1;
+button,
+select {
+  min-height: 32px;
+  padding: 4px 10px;
+  background: var(--ui-field);
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+}
+
+input[type="text"],
+input[type="password"],
+input[type="number"] {
+  min-height: 32px;
+  padding: 5px 8px;
+  background: var(--ui-field);
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+}
+
+button:hover:not(:disabled) {
+  background: var(--ui-hover);
+}
+
+button:disabled {
+  opacity: 0.45;
+}
+
+button[aria-pressed="true"],
+button[aria-pressed="true"]:hover,
+button.primary,
+button.primary:hover:not(:disabled) {
+  background: var(--ui-accent);
+  border-color: var(--ui-accent);
+  color: var(--ui-accent-fg);
+}
+
+button.primary {
+  font-weight: 600;
+}
+
+button.danger,
+button.danger:hover:not(:disabled) {
+  color: var(--ui-error);
+  border-color: var(--ui-error);
+  background: transparent;
+}
+
+button.small {
+  min-height: 26px;
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.icon-button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  min-height: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+}
+
+.with-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.icon {
+  display: block;
+  flex: none;
+}
+
+:focus-visible {
+  outline: 2px solid var(--ui-focus);
+  outline-offset: 1px;
+}
+
+.muted {
+  color: var(--ui-muted);
+}
+
+/* A floating panel over the map. */
+.plate {
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  box-shadow: 0 4px 14px var(--ui-shadow);
+}
+
+/* ---- top bar: the game and its scene at the left, who is online, the invite and the menu at the right ---- */
+
+.topbar {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  z-index: 20;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  pointer-events: none;
+}
+
+.topbar > * {
+  pointer-events: auto;
+}
+
+.game-plate,
+.account-plate {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  height: 48px;
+  padding: 0 8px 0 10px;
+}
+
+.account-plate {
+  flex: none;
+  gap: 8px;
+  padding: 0 8px;
+}
+
+.logo {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ui-accent-fg);
+  background: var(--ui-accent);
+}
+
+.plate-text {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The way back to "my games" is in the menu; on a phone it is also at the left of the top bar. */
+#back {
+  display: none;
+}
+
+.brand,
+.game-title {
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.game-title {
+  max-width: 18em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.scene-picker {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--ui-muted);
+}
+
+.scene-picker::before {
+  content: "/";
+}
+
+.scene-picker:empty {
+  display: none;
+}
+
+.scene-picker select {
+  max-width: 16em;
+  color: var(--ui-fg);
+}
+
+.scene-picker .scene-name {
+  overflow: hidden;
+  color: var(--ui-fg);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Game parts show only in a game, and not over a screen; the name of the site shows otherwise. */
+body:not(.in-game) .game-only,
+.screen-open .game-only,
+.in-game:not(.screen-open) .brand {
+  display: none !important;
+}
+
+.online-list {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 220px;
+  padding: 0 6px;
+  overflow: hidden;
+  font-size: 13px;
+  color: var(--ui-muted);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.online-list::before,
+.online::before {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ui-online);
+}
+
+/* ---- the menu ---- */
+
+.menu {
+  position: absolute;
+  top: 56px;
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: 300px;
+  max-height: calc(100vh - 88px);
+  overflow-y: auto;
+  padding: 12px;
+}
+
+.menu-field {
+  display: grid;
+  gap: 4px;
+}
+
+.menu-field span,
+.menu-section legend {
+  font-size: 13px;
+  color: var(--ui-muted);
+}
+
+.menu-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 10px 10px;
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+}
+
+#menu-account:not(:has(> .account:not([hidden]))) {
+  display: none;
+}
+
+.color-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  align-items: center;
+  gap: 8px;
+}
+
+input[type="color"] {
+  width: 44px;
+  height: 32px;
+  padding: 2px;
+  background: var(--ui-field);
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+}
+
+.account {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.account button {
+  text-align: left;
+}
+
+.account-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- the tool column ---- */
+
+.tool-rail {
+  position: fixed;
+  left: 16px;
+  top: 80px;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  padding: 6px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  box-shadow: 0 4px 14px var(--ui-shadow);
+}
+
+.rail-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.rail-group + .rail-group {
+  margin-top: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--ui-border);
+}
+
+.rail-button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 44px;
+  height: 40px;
+  padding: 0 11px;
+  background: transparent;
+  border: 0;
+  border-radius: 9px;
+}
+
+.rail-label {
+  display: none;
+  white-space: nowrap;
+}
+
+/* The button of the current tool that opens the column: on a phone only (R51). */
+.rail-current {
+  display: none;
+}
+
+.tool-rail.expanded .rail-button {
+  width: 100%;
+  padding-right: 14px;
+}
+
+.tool-rail.expanded .rail-label {
+  display: inline;
+}
+
+/* The hint «Brush · B» beside the column on hover; the expanded column shows the names instead. */
+.tool-rail:not(.expanded) .rail-button:hover::after {
+  content: attr(aria-label);
+  position: absolute;
+  left: calc(100% + 12px);
+  top: 50%;
+  z-index: 1;
+  padding: 4px 8px;
+  transform: translateY(-50%);
+  font-size: 13px;
+  white-space: nowrap;
+  color: var(--ui-fg);
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  pointer-events: none;
+}
+
+.tool-rail:not(.expanded) .rail-button[data-key]:hover::after {
+  content: attr(aria-label) " · " attr(data-key);
+}
+
+.rail-expand .icon {
+  transform: rotate(-90deg);
+}
+
+.tool-rail.expanded .rail-expand .icon {
+  transform: rotate(90deg);
+}
+
+/* A player's or a read-only board has nothing to undo (main.ts). */
+.read-only .rail-history {
+  display: none;
+}
+
+@media (max-height: 760px) {
+  .rail-button {
+    height: 34px;
+  }
+}
+
+/* ---- the settings strip of the tool ---- */
+
+.tool-strip {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 16px;
+  z-index: 10;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px 16px;
-  padding: 6px 8px;
-  border-bottom-width: 1px;
+  justify-content: center;
+  gap: 8px 12px;
+  /* Clear of the status plate at the left and the drawer tabs at the right. */
+  width: fit-content;
+  max-width: calc(100vw - 400px);
+  margin: 0 auto;
+  padding: 8px 12px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  box-shadow: 0 4px 14px var(--ui-shadow);
 }
 
-.palette {
-  grid-row: 2;
-  min-height: 0;
-  overflow-y: auto;
-  padding: 8px 6px;
-  border-right-width: 1px;
-}
-
-.palette h2 {
-  margin: 0 4px 6px;
-  font-size: 13px;
+.strip-title {
   font-weight: 600;
-  color: var(--ui-muted);
-}
-
-.status {
-  grid-column: 1 / -1;
-  display: flex;
-  gap: 24px;
-  padding: 4px 10px;
-  color: var(--ui-muted);
-  border-top-width: 1px;
-  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  cursor: help;
 }
 
 .group {
@@ -82,43 +475,41 @@ body {
   gap: 6px;
 }
 
-/* Tool options are shown only for the tools that use them. */
-.group[hidden] {
-  display: none;
-}
-
 .segmented {
   display: inline-flex;
   flex-wrap: wrap;
   gap: 2px;
 }
 
-button,
-select {
-  font: inherit;
-  color: var(--ui-fg);
-  background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
-  border-radius: 6px;
-  padding: 4px 10px;
+.tool-strip .muted {
+  font-size: 13px;
 }
 
-input[type="text"] {
-  font: inherit;
-  color: var(--ui-fg);
-  background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
-  border-radius: 6px;
-  padding: 4px 8px;
+.tool-strip select,
+.tool-strip input[type="text"] {
+  font-size: 13px;
 }
 
-/* Object signs and colour swatches: icon-only buttons, the name is in the tooltip. */
+.tool-strip input[type="text"] {
+  width: 8em;
+}
+
+/* Swatches and signs: icon-only buttons, the name is in the hint. */
+.swatches button,
 .icons button,
-#token-sides button,
 #mark-colors button {
   display: inline-flex;
   align-items: center;
   padding: 3px;
+  background: transparent;
+  border-color: transparent;
+}
+
+.swatches button[aria-pressed="true"],
+.icons button[aria-pressed="true"],
+#mark-colors button[aria-pressed="true"] {
+  background: var(--ui-accent);
+  border-color: var(--ui-accent);
 }
 
 .icons canvas {
@@ -127,12 +518,301 @@ input[type="text"] {
   height: 22px;
 }
 
+.swatch {
+  display: block;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--ui-border);
+  border-radius: 4px;
+}
+
+/* A side shows its frame on the board: the colour, and solid, dashed or dotted (render.ts). */
+.side-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 7px;
+  font-size: 13px;
+  background: transparent;
+  border-color: transparent;
+}
+
+.side-button[aria-pressed="true"],
+.side-button[aria-pressed="true"]:hover {
+  color: var(--ui-fg);
+  background: var(--ui-hover);
+  border-color: var(--ui-muted);
+}
+
+.side-mark {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  border: 3px solid;
+  border-radius: 50%;
+}
+
+.side-mark.dashed {
+  border-style: dashed;
+}
+
+.side-mark.dotted {
+  border-style: dotted;
+}
+
+/* ---- the status plate: the square under the pointer and the zoom ---- */
+
+.status {
+  position: fixed;
+  left: 16px;
+  bottom: 16px;
+  z-index: 10;
+  display: flex;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  font: 500 12px/1.3 "JetBrains Mono", ui-monospace, monospace;
+  color: var(--ui-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.status span:empty {
+  display: none;
+}
+
+/* ---- messages: the lost connection, ?measure and notices, under the top bar ---- */
+
+.messages {
+  position: fixed;
+  top: 76px;
+  left: 90px;
+  right: 90px;
+  z-index: 40;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.messages > * {
+  pointer-events: auto;
+}
+
+.drawer-open .messages {
+  right: 392px;
+}
+
+.connection,
+.measure {
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 10px;
+}
+
+.connection {
+  font-weight: 600;
+  color: var(--ui-error);
+}
+
+.measure {
+  font: 500 12px/1.3 "JetBrains Mono", ui-monospace, monospace;
+  color: var(--ui-muted);
+}
+
+.notice {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 640px;
+  padding: 8px 12px;
+  color: var(--ui-notice-fg);
+  background: var(--ui-notice-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  box-shadow: 0 4px 14px var(--ui-shadow);
+}
+
+/* ---- the drawer of a game: scenes and members, closed at the start ---- */
+
+.drawer-tabs {
+  position: fixed;
+  right: 0;
+  top: 50%;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transform: translateY(-50%);
+}
+
+.drawer-tabs button {
+  width: 36px;
+  padding: 14px 0;
+  font-size: 13px;
+  writing-mode: vertical-rl;
+  background: var(--ui-bg);
+  border-right: 0;
+  border-radius: 10px 0 0 10px;
+  box-shadow: 0 4px 14px var(--ui-shadow);
+}
+
+.drawer {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  bottom: 16px;
+  z-index: 25;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  width: 360px;
+  overflow-y: auto;
+  padding: 14px;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 12px;
+  box-shadow: 0 4px 14px var(--ui-shadow);
+}
+
+.screen-open .drawer {
+  display: none;
+}
+
+.drawer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.drawer h2,
+.drawer h3,
+.drawer p,
+.invite-dialog h2,
+.invite-dialog p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.drawer h2,
+.invite-dialog h2 {
+  font-size: 18px;
+}
+
+.drawer h3 {
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--ui-muted);
+}
+
+.drawer section {
+  scroll-margin-top: 8px;
+}
+
+.danger-zone {
+  margin-top: auto;
+  padding-top: 24px;
+}
+
+.scene-list,
+.member-list,
+.game-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.scene-list li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.scene-list .scene-name {
+  overflow: hidden;
+  font-weight: 600;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  background: transparent;
+  border-color: transparent;
+}
+
+/* The scene on the board. */
+.scene-list .scene-name[aria-pressed="true"] {
+  color: var(--ui-fg);
+  background: var(--ui-hover);
+  border-color: var(--ui-border);
+}
+
+.scene-list .icon-button {
+  width: 30px;
+  height: 30px;
+  color: var(--ui-muted);
+}
+
+.scene-list .icon-button[aria-pressed="true"] {
+  color: var(--ui-fg);
+  background: transparent;
+  border-color: transparent;
+}
+
+/* "current" is a mark, not a button (audit finding 6). */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.badge::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ui-accent);
+}
+
+.member-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.member-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.online {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+}
+
+.drawer input[type="text"] {
+  max-width: 100%;
+}
+
+/* ---- windows: the token editor and the invite ---- */
+
 dialog {
+  max-width: calc(100vw - 32px);
+  padding: 20px;
   color: var(--ui-fg);
   background: var(--ui-bg);
   border: 1px solid var(--ui-border);
-  border-radius: 8px;
-  padding: 16px;
+  border-radius: 12px;
 }
 
 dialog::backdrop {
@@ -162,118 +842,107 @@ dialog label {
   gap: 8px;
 }
 
-button:hover:not(:disabled) {
-  background: var(--ui-hover);
+.invite-dialog {
+  width: 560px;
 }
 
-button:disabled {
-  color: var(--ui-muted);
-  opacity: 0.6;
-}
-
-button[aria-pressed="true"],
-button[aria-pressed="true"]:hover {
-  background: var(--ui-accent);
-  border-color: var(--ui-accent);
-  color: var(--ui-accent-fg);
-}
-
-:focus-visible {
-  outline: 2px solid var(--ui-focus);
-  outline-offset: 1px;
-}
-
-.terrain-list {
+.invite-dialog[open] {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 16px;
 }
 
-.terrain-list button {
+.invite-dialog form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* The QR code beside the three steps (InviteCard of variant V). */
+.invite-qr-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  width: 100%;
-  text-align: left;
-  border-color: transparent;
+  gap: 20px;
 }
 
-.swatch {
-  flex: none;
-  width: 18px;
-  height: 18px;
-  border: 1px solid var(--ui-border);
-  border-radius: 3px;
-}
-
-.notice {
-  position: fixed;
-  bottom: 40px;
-  left: 16px;
-  right: 16px;
-  width: fit-content;
-  max-width: 640px;
-  margin-inline: auto;
+.invite-steps {
+  margin: 0;
+  padding-left: 20px;
   display: flex;
-  align-items: center;
+  flex-direction: column;
+  gap: 10px;
+  line-height: 1.4;
+}
+
+.invite-limits {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  padding: 8px 12px;
-  color: var(--ui-notice-fg);
-  background: var(--ui-notice-bg);
-  border: 1px solid var(--ui-border);
-  border-radius: 8px;
 }
 
-.notice[hidden] {
-  display: none;
+.invite-limits input {
+  width: 100%;
 }
 
-/* Narrow screens: the palette shows swatches only, names stay in tooltips. */
-@media (max-width: 600px) {
-  .terrain-list .name {
-    display: none;
-  }
-
-  .terrain-list button {
-    padding: 6px;
-  }
+.invite-note {
+  margin: 0;
+  padding: 10px 12px;
+  line-height: 1.4;
+  background: var(--ui-field);
+  border-left: 3px solid var(--ui-accent);
+  border-radius: 9px;
 }
 
-/* ---- account (app/login.ts, app/admin.ts) ---- */
-
-.account {
-  margin-left: auto;
+.invite-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
-.account-name {
-  max-width: 16em;
-  overflow: hidden;
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+/* A new invite (app/invite.ts): the QR code has the same colours in every theme (themes.css). */
+.invite {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
-/* Covers the board, the palette and the status bar under the toolbar, so language and theme stay at hand.
-   Positioned absolutely in its grid area, it takes no grid cells from the other panels. */
-body {
-  position: relative;
+.invite-qr {
+  flex: none;
+  max-width: 55%;
 }
+
+.qr {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border-radius: 10px;
+  image-rendering: pixelated;
+}
+
+.link-row {
+  display: flex;
+  gap: 8px;
+}
+
+.link-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ---- screens without the board (app/login.ts): sign-in, my games, administration ---- */
 
 .screen {
-  position: absolute;
-  grid-column: 1 / -1;
-  grid-row: 2 / 4;
+  position: fixed;
   inset: 0;
-  z-index: 1;
+  z-index: 15;
   overflow: auto;
-  padding: 24px 16px;
-  background: var(--board-void);
+  padding: 88px 16px 24px;
+  background: var(--ui-page);
 }
 
-.account[hidden],
-.screen[hidden],
-.form-error[hidden] {
-  display: none;
+.screen-open .board-ui,
+.screen-open .drawer-tabs {
+  display: none !important;
 }
 
 .card {
@@ -286,7 +955,7 @@ body {
   padding: 20px;
   background: var(--ui-bg);
   border: 1px solid var(--ui-border);
-  border-radius: 8px;
+  border-radius: 12px;
 }
 
 .card.wide {
@@ -303,7 +972,7 @@ body {
 }
 
 .card h2 {
-  font-size: 18px;
+  font-size: 20px;
 }
 
 .card h3 {
@@ -328,23 +997,12 @@ body {
   color: var(--ui-muted);
 }
 
-input[type="text"],
-input[type="password"],
-input[type="number"] {
-  font: inherit;
-  color: var(--ui-fg);
-  background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
-  border-radius: 6px;
-  padding: 6px 8px;
-}
-
 .form-note {
   margin: 0;
   padding: 8px 10px;
   color: var(--ui-notice-fg);
   background: var(--ui-notice-bg);
-  border-radius: 6px;
+  border-radius: 8px;
   overflow-wrap: anywhere;
 }
 
@@ -360,15 +1018,8 @@ input[type="number"] {
   gap: 8px;
 }
 
-button.primary,
-button.primary:hover:not(:disabled) {
-  background: var(--ui-accent);
-  border-color: var(--ui-accent);
-  color: var(--ui-accent-fg);
-}
-
 .secret {
-  font-family: ui-monospace, monospace;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
   user-select: all;
 }
 
@@ -407,23 +1058,6 @@ button.primary:hover:not(:disabled) {
   gap: 8px;
 }
 
-/* ---- games (app/games.ts, app/game.ts) ---- */
-
-.muted {
-  color: var(--ui-muted);
-}
-
-.game-list,
-.scene-list,
-.member-list {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
 .game-list li {
   display: flex;
   align-items: center;
@@ -436,118 +1070,262 @@ button.primary:hover:not(:disabled) {
 .game-text {
   display: flex;
   flex-direction: column;
+  align-items: flex-start;
   gap: 2px;
   min-width: 0;
   overflow-wrap: anywhere;
 }
 
-/* The panel of an open game: at the right of the board, under the toolbar; the board stays usable beside it. */
-.game-panel {
-  position: relative;
-  grid-column: 2;
-  grid-row: 2;
-  justify-self: end;
-  align-self: start;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  width: 320px;
-  max-width: 50vw;
-  max-height: 100%;
-  overflow-y: auto;
-  padding: 10px;
-  background: var(--ui-bg);
-  border: 0 solid var(--ui-border);
-  border-width: 0 0 1px 1px;
-}
+/* ---- phones (variant V, v-phone.dc.html) ---- */
 
-.game-panel[hidden] {
-  display: none;
-}
+@media (max-width: 640px) {
+  .topbar {
+    top: 12px;
+    left: 12px;
+    right: 12px;
+    gap: 8px;
+  }
 
-.game-panel h2,
-.game-panel h3,
-.game-panel p {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
+  .game-plate,
+  .account-plate {
+    height: 52px;
+    padding: 0 6px;
+    border-radius: 14px;
+  }
 
-.game-panel h2 {
-  font-size: 16px;
-}
+  .game-plate {
+    flex: 1;
+  }
 
-.game-panel h3 {
-  margin-bottom: 6px;
-  font-size: 14px;
-}
+  .in-game .logo {
+    display: none;
+  }
 
-.game-panel input[type="number"] {
-  width: 6em;
-}
+  .in-game:not(.screen-open) #back {
+    display: inline-flex;
+  }
 
-.game-panel input[type="text"] {
-  max-width: 100%;
-}
+  #back,
+  #menu-button {
+    width: 44px;
+    height: 44px;
+  }
 
-/* A new invite (app/invite.ts): the QR code has the same colours in every theme (themes.css). */
-.invite {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
+  /* The scene above, the game under it in small letters. */
+  .plate-text {
+    flex-direction: column-reverse;
+    align-items: flex-start;
+    gap: 0;
+  }
 
-.qr {
-  display: block;
-  align-self: center;
-  max-width: 100%;
-  height: auto;
-  image-rendering: pixelated;
-}
+  .game-title {
+    max-width: 100%;
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--ui-muted);
+  }
 
-.qr[hidden] {
-  display: none;
-}
+  .scene-picker::before {
+    content: none;
+  }
 
-.scene-list li,
-.member-list li {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 8px;
-}
+  .scene-picker select {
+    max-width: 100%;
+  }
 
-.scene-name {
-  max-width: 100%;
-  font-weight: 600;
-  text-align: left;
-  overflow-wrap: anywhere;
-}
+  .online-list,
+  #invite-open span {
+    display: none;
+  }
 
-.member-name {
-  font-weight: 600;
-  overflow-wrap: anywhere;
-}
+  #invite-open {
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    justify-content: center;
+  }
 
-.badge {
-  padding: 2px 8px;
-  border-radius: 10px;
-  color: var(--ui-accent-fg);
-  background: var(--ui-accent);
-}
+  .menu {
+    top: 60px;
+    width: min(320px, calc(100vw - 24px));
+  }
 
-/* "online" at a member with an open stream (plan 8.6). */
-.online {
-  font-size: 12px;
-  color: var(--ui-accent);
-}
+  /*
+   * The master's column hides behind one round button of the current tool (R51); a press opens the column of
+   * buttons 44 px square with undo and redo, above the map and the strip, scrolling when the screen is short.
+   */
+  .tool-rail {
+    left: 12px;
+    top: 76px;
+    z-index: 12;
+    max-height: calc(100vh - 76px - 12px);
+    overflow-y: auto;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+  }
 
-.online[hidden] {
-  display: none;
-}
+  body:not(.read-only) .rail-current {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 52px;
+    height: 52px;
+    padding: 0;
+    color: var(--ui-accent-fg);
+    background: var(--ui-accent);
+    border: 1px solid var(--ui-accent);
+    border-radius: 50%;
+    box-shadow: 0 6px 16px var(--ui-shadow);
+  }
 
-/* A read-only board or a player's: no terrain to paint, nothing to undo. */
-.read-only .palette,
-.read-only #undo,
-.read-only #redo {
-  display: none;
+  body:not(.read-only) .tool-rail:not(.open) .rail-group {
+    display: none;
+  }
+
+  .tool-rail.open {
+    padding: 6px;
+    background: var(--ui-bg);
+    border: 1px solid var(--ui-border);
+    border-radius: 16px;
+    box-shadow: 0 6px 16px var(--ui-shadow);
+  }
+
+  .tool-rail.open .rail-current {
+    margin-bottom: 6px;
+  }
+
+  .rail-button,
+  .tool-rail.expanded .rail-button {
+    width: 44px;
+    height: 44px;
+    padding: 0 11.5px;
+  }
+
+  .tool-rail .rail-label,
+  .rail-toggle,
+  .tool-rail .rail-button:hover::after {
+    display: none !important;
+  }
+
+  /* A player: three round buttons at the bottom right, «Ping» on top and «Select» at the thumb. */
+  .read-only .tool-rail {
+    top: auto;
+    left: auto;
+    right: 12px;
+    bottom: 24px;
+    flex-direction: column-reverse;
+    gap: 10px;
+    max-height: none;
+    overflow: visible;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+  }
+
+  .read-only .rail-group {
+    flex-direction: column-reverse;
+    gap: 10px;
+  }
+
+  .read-only .rail-group + .rail-group {
+    margin: 0;
+    padding: 0;
+    border: 0;
+  }
+
+  .read-only .rail-button {
+    justify-content: center;
+    width: 56px;
+    height: 56px;
+    padding: 0;
+    background: var(--ui-bg);
+    border: 1px solid var(--ui-border);
+    border-radius: 50%;
+    box-shadow: 0 6px 16px var(--ui-shadow);
+  }
+
+  .read-only .rail-button[aria-pressed="true"] {
+    background: var(--ui-accent);
+    border-color: var(--ui-accent);
+  }
+
+  .tool-strip {
+    left: 12px;
+    right: 12px;
+    bottom: 12px;
+    flex-wrap: nowrap;
+    justify-content: flex-start;
+    width: auto;
+    max-width: none;
+    overflow-x: auto;
+    padding: 4px 10px;
+  }
+
+  .tool-strip > * {
+    flex: none;
+  }
+
+  .tool-strip .group {
+    flex-wrap: nowrap;
+  }
+
+  .tool-strip .segmented {
+    flex-wrap: nowrap;
+  }
+
+  .status {
+    left: 12px;
+    bottom: 12px;
+    font-size: 11px;
+  }
+
+  .status-scale {
+    display: none;
+  }
+
+  .tool-strip:not([hidden]) ~ .status {
+    bottom: 76px;
+  }
+
+  .messages {
+    top: 76px;
+    left: 64px;
+    right: 12px;
+  }
+
+  .drawer-open .messages {
+    right: 12px;
+  }
+
+  .drawer-tabs button {
+    width: 30px;
+    padding: 10px 0;
+    font-size: 12px;
+  }
+
+  .drawer {
+    inset: 0;
+    width: auto;
+    border-radius: 0;
+  }
+
+  /* The invite window: the steps under the QR code, where they have the width to read. */
+  .invite-qr-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .invite-qr {
+    align-self: center;
+    max-width: 100%;
+  }
+
+  .screen {
+    padding-top: 80px;
+  }
 }

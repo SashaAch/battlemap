@@ -27,7 +27,7 @@ describe("dictionaries", () => {
 
   test("every key used in index.html exists", () => {
     const html = readFileSync(path.join(clientDir, "index.html"), "utf8");
-    const keys = [...html.matchAll(/data-i18n(?:-title)?="([^"]+)"/g)].map((match) => match[1]);
+    const keys = [...html.matchAll(/data-i18n(?:-title|-aria)?="([^"]+)"/g)].map((match) => match[1]);
     assert.ok(keys.length > 0);
     for (const key of keys) assert.ok(Object.hasOwn(ru, key), `index.html uses unknown key ${key}`);
   });

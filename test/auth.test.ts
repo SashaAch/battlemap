@@ -7,6 +7,7 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "n
 import http from "node:http";
 import { networkInterfaces, tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, test } from "node:test";
 
 import { CLIENT_ERRORS } from "../client/src/app/api.ts";
@@ -919,6 +920,64 @@ describe("language and theme in the account", () => {
   });
 });
 
+describe("own colours of the void and the grid, and the expanded tool column (R45)", () => {
+  test("kept in the account: they come back after signing out and in on another device", async () => {
+    const { site, admin } = await siteWithAdmin();
+    const saved = await call(site, "PUT", "/api/me/settings", {
+      cookie: admin,
+      body: { voidColor: "#1A2b3c", gridColor: "#ffcc00", toolsExpanded: true },
+    });
+    assert.deepEqual(saved.body, { settings: { voidColor: "#1a2b3c", gridColor: "#ffcc00", toolsExpanded: true } });
+    assert.equal((await call(site, "POST", "/api/auth/logout", { cookie: admin })).status, 204);
+
+    const again = await login(site, "admin", ADMIN.password);
+    assert.deepEqual(again.body.settings, { voidColor: "#1a2b3c", gridColor: "#ffcc00", toolsExpanded: true });
+  });
+
+  test("null takes a colour back to the theme's; the other settings stay", async () => {
+    const { site, admin } = await siteWithAdmin();
+    await call(site, "PUT", "/api/me/settings", { cookie: admin, body: { theme: "dark", voidColor: "#101010", gridColor: "#202020" } });
+    const reset = await call(site, "PUT", "/api/me/settings", { cookie: admin, body: { voidColor: null } });
+    assert.deepEqual(reset.body, { settings: { theme: "dark", gridColor: "#202020" } });
+    assert.deepEqual((await call(site, "GET", "/api/me", { cookie: admin })).body.settings, { theme: "dark", gridColor: "#202020" });
+  });
+
+  test("anything but #rrggbb, null or a boolean for the expanded column is refused and nothing is saved", async () => {
+    const { site, admin } = await siteWithAdmin();
+    const refused = [
+      { voidColor: "red" },
+      { voidColor: "#fff" },
+      { gridColor: "#12345g" },
+      { gridColor: `#${"a".repeat(9999)}` },
+      { voidColor: 0x123456 },
+      { gridColor: "#1234567" },
+      { gridColor: " #123456" },
+      { voidColor: "rgba(0, 0, 0, 0.5)" },
+      { voidColor: ["#123456"] },
+      { toolsExpanded: "true" },
+      { toolsExpanded: 1 },
+      { toolsExpanded: null },
+      { theme: "dark", voidColor: "blue" },
+    ];
+    for (const body of refused) {
+      assertError(await call(site, "PUT", "/api/me/settings", { cookie: admin, body }), "request.format");
+    }
+    assert.deepEqual((await call(site, "GET", "/api/me", { cookie: admin })).body.settings, {});
+  });
+
+  test("a stored value that is no longer valid is not shown", async () => {
+    const { site, admin } = await siteWithAdmin();
+    await site.server.close();
+    const db = new DatabaseSync(path.join(site.dir, "battlemap.db"));
+    db.prepare("UPDATE users SET settings_json = ? WHERE login = 'admin'").run('{"voidColor":"red","gridColor":"#abcdef","toolsExpanded":"yes"}');
+    db.close();
+    const again = await start(site.dir, site.clock);
+    site.server = again.server;
+    site.base = again.base;
+    assert.deepEqual((await call(site, "GET", "/api/me", { cookie: admin })).body.settings, { gridColor: "#abcdef" });
+  });
+});
+
 describe("error codes", () => {
   test("every server error code has a text in both dictionaries, and no dictionary has stale ones", () => {
     const expected = [...Object.keys(ERRORS), ...CLIENT_ERRORS].map((code) => `error.${code}`).sort();
@@ -968,6 +1027,13 @@ describe("client files", () => {
       ["/index.html", "text/html; charset=utf-8"],
       ["/style.css", "text/css; charset=utf-8"],
       ["/themes.css", "text/css; charset=utf-8"],
+      ["/fonts/fonts.css", "text/css; charset=utf-8"],
+      ["/fonts/golos-text-cyrillic.woff2", "font/woff2"],
+      ["/fonts/golos-text-latin.woff2", "font/woff2"],
+      ["/fonts/jetbrains-mono-500-cyrillic.woff2", "font/woff2"],
+      ["/fonts/jetbrains-mono-500-latin.woff2", "font/woff2"],
+      ["/fonts/OFL-golos-text.txt", "text/plain; charset=utf-8"],
+      ["/fonts/OFL-jetbrains-mono.txt", "text/plain; charset=utf-8"],
     ]) {
       const response = await fetch(site.base + url);
       assert.equal(response.status, 200, url);
@@ -1042,6 +1108,20 @@ describe("client files", () => {
       "/%E0%A4%A",
       "/dist",
       "/dist/",
+      "/fonts/../server/app.ts",
+      "/fonts/..%2fserver%2fapp.ts",
+      "/fonts/%2e%2e/server/app.ts",
+      "/fonts/%2e%2e%5cserver%5capp.ts",
+      "/fonts/x.ttf",
+      "/fonts/sub/a.woff2",
+      "/fonts/sub%2fa.woff2",
+      "/fonts/.woff2",
+      "/fonts/GOLOS-TEXT-LATIN.woff2",
+      "/fonts/golos-text-latin.woff2.map",
+      "/fonts/notes.txt",
+      "/fonts/OFL-golos-text.txt%00.woff2",
+      "/fonts",
+      "/fonts/",
     ];
     for (const target of targets) {
       const reply = await rawRequest(site, "GET", target);

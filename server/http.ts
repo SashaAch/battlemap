@@ -166,16 +166,20 @@ export function sendJson(res: ServerResponse, status: number, body: unknown, hea
 // ---- client files ----
 
 /**
- * The only client files served: the page, its two style sheets and the build output in dist/.
- * A name that does not match exactly (`..`, `\`, `%2e%2e`, `:`, sub-folders) is simply not found.
+ * The only client files served: the page, its two style sheets, the build output in dist/ and the fonts with their
+ * style sheet and licences in fonts/. A name that does not match exactly (`..`, `\`, `%2e%2e`, `:`, sub-folders,
+ * other extensions) is simply not found.
  */
-const CLIENT_FILE = /^(?:index\.html|style\.css|themes\.css|dist\/[A-Za-z0-9_-][A-Za-z0-9._-]*)$/;
+const CLIENT_FILE =
+  /^(?:index\.html|style\.css|themes\.css|dist\/[A-Za-z0-9_-][A-Za-z0-9._-]*|fonts\/(?:fonts\.css|[a-z0-9][a-z0-9-]*\.woff2|OFL-[a-z0-9][a-z0-9-]*\.txt))$/;
 
 const CONTENT_TYPES: Readonly<Record<string, string>> = {
   ".html": "text/html; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
   ".map": "application/json; charset=utf-8",
+  ".woff2": "font/woff2",
+  ".txt": "text/plain; charset=utf-8",
 };
 
 /**

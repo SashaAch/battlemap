@@ -60,6 +60,13 @@ const TOOL_KEYS: Record<string, Tool> = {
   KeyG: "ping",
 };
 
+/** The letter of the key of `tool`, for its hint (Brush · B). */
+export function toolKey(tool: Tool): string {
+  const code = Object.keys(TOOL_KEYS).find((key) => TOOL_KEYS[key] === tool);
+  if (!code) throw new Error(`tool ${tool} has no key`);
+  return code.slice("Key".length);
+}
+
 /** A selected token or object: Delete removes it. */
 interface Selection {
   collection: "tokens" | "objects";
