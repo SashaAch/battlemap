@@ -17,6 +17,8 @@ import type { GameInfo, MemberInfo, SceneData, SceneSummary } from "./api.ts";
 import { LiveScene } from "./live.ts";
 import type { Received } from "./live.ts";
 import { button, codeOf, errorKey, field, labelled } from "./login.ts";
+import { echoChange, measuring, RoundTrips } from "./measure.ts";
+import type { RoundTripSummary } from "./measure.ts";
 import { openStream } from "./stream.ts";
 import type { GameStream, StreamEventName } from "./stream.ts";
 
@@ -51,6 +53,8 @@ export interface GameHooks {
   failed(error: unknown): void;
   /** Opens the "my games" screen. */
   showGames(): void;
+  /** With `?measure` in the address: the times there and back so far on the master's board, null to hide them (measure.ts). */
+  measured(summary: RoundTripSummary | null): void;
 }
 
 export interface GameView {
@@ -77,6 +81,7 @@ interface PingEvent {
   sceneId: number;
   x: number;
   y: number;
+  userId: number;
   name: string;
 }
 
@@ -123,6 +128,9 @@ export function startGame(hooks: GameHooks): GameView {
   let changeCount = 0;
   /** Only the latest read of the game is shown. */
   let loadCount = 0;
+  /** `?measure` in the address: a player answers each change from someone else with a ping, the master counts the time. */
+  const measure = measuring(location.search);
+  let roundTrips = new RoundTrips();
 
   const whenIdle = (): Promise<void> =>
     new Promise((resolve) => {
@@ -167,6 +175,8 @@ export function startGame(hooks: GameHooks): GameView {
     const round = sendRound;
     patches = patches.then(async () => {
       if (round !== sendRound || openId !== gameId) return;
+      // Only a change of the current scene reaches the players, so only it gets an answer.
+      if (measure && shownEditor && info !== null && target.sceneId === info.activeSceneId) roundTrips.sent(performance.now());
       try {
         await request("POST", `api/games/${gameId}/scenes/${target.sceneId}/patch`, { patch });
       } catch (error) {
@@ -312,8 +322,13 @@ export function startGame(hooks: GameHooks): GameView {
           if (!(error instanceof SceneError)) throw error;
           result = "gap";
         }
-        if (result === "gap") void load(gameId, sceneId);
-        else if (result === "applied") hooks.board.refresh();
+        if (result === "gap") {
+          void load(gameId, sceneId);
+        } else if (result === "applied") {
+          hooks.board.refresh();
+          // The board draws on the next frame; the answer goes right after it.
+          if (!shownEditor) echoChange(measure, (callback) => requestAnimationFrame(callback), (point) => sendPing(gameId, point));
+        }
         return;
       }
       case "scene.switch":
@@ -325,6 +340,10 @@ export function startGame(hooks: GameHooks): GameView {
         return;
       case "ping": {
         const ping = data as PingEvent;
+        if (measure && shownEditor && info !== null && ping.userId !== (info.gmId ?? info.ownerId)) {
+          const at = performance.now();
+          if (roundTrips.answered(at) !== null) hooks.measured(roundTrips.summary());
+        }
         if (live && ping.sceneId === live.sceneId) hooks.board.ping({ x: ping.x, y: ping.y }, ping.name);
         return;
       }
@@ -627,6 +646,8 @@ export function startGame(hooks: GameHooks): GameView {
     drainTimer = undefined;
     queue.length = 0;
     online = new Set();
+    roundTrips = new RoundTrips();
+    hooks.measured(null);
     connection.hidden = true;
     loadCount++;
     panel.hidden = true;

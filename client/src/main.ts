@@ -7,6 +7,7 @@ import { forwardPatch } from "./app/api.ts";
 import type { AccountSettings } from "./app/api.ts";
 import { startGame } from "./app/game.ts";
 import type { BoardAccess, GameBoard } from "./app/game.ts";
+import type { RoundTripSummary } from "./app/measure.ts";
 import { showGames } from "./app/games.ts";
 import { startAccount } from "./app/login.ts";
 import { EDGE_TYPES, isSideId, isSizeId, MARK_COLORS, OBJECT_TYPES, SIDES, SIZES, TERRAIN } from "./board/catalog.ts";
@@ -108,6 +109,7 @@ const notice = byId("notice", HTMLElement);
 const noticeText = byId("notice-text", HTMLElement);
 const noticeClose = byId("notice-close", HTMLButtonElement);
 const statusCell = byId("status-cell", HTMLElement);
+const statusMeasure = byId("status-measure", HTMLElement);
 
 const context = canvas.getContext("2d");
 if (!context) throw new Error("canvas 2d context is unavailable");
@@ -133,6 +135,7 @@ function applyLanguage(): void {
   translateAttribute("data-i18n-title", (element, text) => (element.title = text));
   updateStatus();
   updateNotice();
+  updateMeasure();
 }
 
 // ---- notice ----
@@ -246,6 +249,15 @@ function updateStatus(): void {
   }
   const cell = cellAt(board.hover);
   statusCell.textContent = t("status.cell", { x: cell.x, y: cell.y });
+}
+
+/** The times there and back with `?measure` in the address (app/measure.ts), null while there are none. */
+let measured: RoundTripSummary | null = null;
+
+function updateMeasure(): void {
+  statusMeasure.hidden = measured === null;
+  statusMeasure.textContent =
+    measured === null ? "" : t("status.measure", { count: measured.count, median: measured.median.toFixed(1), worst: measured.worst.toFixed(1) });
 }
 
 function updateHistoryButtons(): void {
@@ -648,6 +660,10 @@ const games = startGame({
   showNotice,
   failed: (error) => account.failed(error),
   showGames: () => account.showGames(),
+  measured: (summary) => {
+    measured = summary;
+    updateMeasure();
+  },
 });
 
 const account = startAccount({

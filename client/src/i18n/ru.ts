@@ -135,6 +135,7 @@ export const ru = {
 
   "status.cell": "Клетка {x}, {y}",
   "status.scale": "1 клетка = 5 фт",
+  "status.measure": "Замеров: {count}, туда и обратно: медиана {median} мс, худший {worst} мс",
 
   "notice.close": "Закрыть",
   "notice.draftBroken": "Черновик повреждён и не открыт. Он сохранён отдельно, открыта пустая сцена.",

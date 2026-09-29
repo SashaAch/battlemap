@@ -137,6 +137,7 @@ export const en: Record<keyof typeof ru, string> = {
 
   "status.cell": "Square {x}, {y}",
   "status.scale": "1 square = 5 ft",
+  "status.measure": "Round trips: {count}, median {median} ms, worst {worst} ms",
 
   "notice.close": "Close",
   "notice.draftBroken": "The draft is damaged and was not opened. It has been kept separately; an empty scene was opened.",
