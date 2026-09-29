@@ -9,7 +9,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import type { TLSSocket } from "node:tls";
 
-import { Accounts, checkSettings, meView, SESSION_COOKIE, SESSION_LIFETIME_MS, userView } from "./auth.ts";
+import { Accounts, checkSettings, meView, SESSION_COOKIE, SESSION_LIFETIME_MS, sha256, userView } from "./auth.ts";
 import type { Authenticated } from "./auth.ts";
 import { Database } from "./db.ts";
 import type { GameKind, Role, User } from "./db.ts";
@@ -53,6 +53,8 @@ export interface ServerOptions {
   port?: number;
   /** The clock, replaced in tests. */
   now?: () => number;
+  /** How often open event streams are kept awake and their sessions checked; HEARTBEAT_MS, shorter in tests. */
+  heartbeatMs?: number;
   log?: (line: string) => void;
 }
 
@@ -71,6 +73,8 @@ interface Call {
   params: Record<string, string>;
   /** Set for every route but `anyone`, which may still get a session. */
   auth: Authenticated | null;
+  /** The session cookie as sent, valid or not. */
+  sessionToken: string | undefined;
   address: string;
 }
 
@@ -181,11 +185,10 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games, st
       {
         access: "anyone",
         limit: AUTH_BODY_LIMIT,
-        handle({ auth }) {
-          if (auth) {
-            accounts.logout(auth);
-            streams.closeSession(auth.tokenHash);
-          }
+        handle({ auth, sessionToken }) {
+          if (auth) accounts.logout(auth);
+          // The streams of this cookie close even when its session already expired (auth is null then).
+          if (sessionToken !== undefined) streams.closeSession(sha256(sessionToken));
           return { status: 204, session: null };
         },
       },
@@ -495,13 +498,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const clientDir = await realpath(CLIENT_DIR);
   const db = new Database(path.join(options.dataDir, "battlemap.db"));
   const server = createServer();
-  const streams = new Streams();
+  const accounts = new Accounts(db, now);
+  const streams = new Streams((tokenHash) => accounts.sessionAlive(tokenHash), options.heartbeatMs);
   const games = new Games(db, now, streams, (error) => log(`error: a scene was not saved: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`));
   let setupToken: string | null;
 
   try {
     db.deleteExpired(now());
-    const accounts = new Accounts(db, now);
     setupToken = accounts.startSetup();
     const routes = makeRoutes(accounts, settings, games, streams);
     const hosts = new HostCheck(settings.current.allowedHosts);
@@ -535,7 +538,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       if (changes && !isSameOrigin(req, secure)) throw new ApiError("request.origin");
       if (changes && !isJsonRequest(req)) throw new ApiError("request.contentType");
 
-      const auth = accounts.authenticate(readCookie(req, SESSION_COOKIE));
+      const sessionToken = readCookie(req, SESSION_COOKIE);
+      const auth = accounts.authenticate(sessionToken);
       if (route.access !== "anyone") {
         if (!auth) throw new ApiError("auth.required");
         if (auth.user.mustChangePassword && !route.beforePasswordChange) throw new ApiError("auth.mustChangePassword");
@@ -543,7 +547,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
 
       const body = changes ? await readJsonObject(req, route.limit ?? BODY_LIMIT) : {};
-      const reply = await route.handle({ body, params, auth, address: req.socket.remoteAddress ?? "" });
+      const reply = await route.handle({ body, params, auth, sessionToken, address: req.socket.remoteAddress ?? "" });
 
       const headers: Record<string, string> = {};
       if (reply.session !== undefined) {

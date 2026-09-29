@@ -5,6 +5,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 
 import { startServer } from "./app.ts";
+import { stopOnSignals } from "./stop.ts";
 
 const { values } = parseArgs({ options: { data: { type: "string" }, host: { type: "string" } } });
 
@@ -14,18 +15,13 @@ try {
     host: values.host,
     log: (line) => console.log(line),
   });
-  const stop = (): void => {
-    // Closing writes the scenes changed in the last second; a failure there is printed.
-    server.close().then(
-      () => process.exit(0),
-      (error: unknown) => {
-        console.error(`battlemap: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`);
-        process.exit(1);
-      },
-    );
-  };
-  process.once("SIGINT", stop);
-  process.once("SIGTERM", stop);
+  // Closing writes the scenes changed in the last second; a failure there is printed.
+  stopOnSignals(
+    process,
+    () => server.close(),
+    (code) => process.exit(code),
+    (error) => console.error(`battlemap: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`),
+  );
 } catch (error) {
   console.error(`battlemap: ${error instanceof Error ? error.message : String(error)}`);
   process.exitCode = 1;

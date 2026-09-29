@@ -66,10 +66,17 @@ export class Streams {
   readonly #streams = new Set<Stream>();
   readonly #heartbeat: ReturnType<typeof setInterval>;
 
-  constructor() {
+  /**
+   * `alive` tells whether the session a stream was opened with is still valid; it is asked on every heartbeat,
+   * and a stream of an ended session (expired, signed out elsewhere) is closed.
+   */
+  constructor(alive: (tokenHash: Buffer) => boolean, heartbeatMs = HEARTBEAT_MS) {
     this.#heartbeat = setInterval(() => {
-      for (const stream of this.#streams) stream.heartbeat();
-    }, HEARTBEAT_MS);
+      for (const stream of this.#streams) {
+        if (alive(stream.tokenHash)) stream.heartbeat();
+        else stream.close();
+      }
+    }, heartbeatMs);
     this.#heartbeat.unref();
   }
 

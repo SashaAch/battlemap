@@ -3,11 +3,14 @@
 // with the data in a temporary folder; the stream is read with fetch. Every right has a test of the refusal.
 
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import type { ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, test } from "node:test";
+import type { TestContext } from "node:test";
 
 import { forwardPatch } from "../client/src/app/api.ts";
 import { LiveScene } from "../client/src/app/live.ts";
@@ -15,12 +18,13 @@ import { applyPatch, applyToChange, beginChange, finishChange, newHistory, newSc
 import type { Patch, Scene } from "../client/src/board/store.ts";
 import { startServer } from "../server/app.ts";
 import type { RunningServer } from "../server/app.ts";
-import { ERRORS } from "../server/errors.ts";
+import { ApiError, ERRORS } from "../server/errors.ts";
 import type { ErrorCode } from "../server/errors.ts";
-import { MAX_PINGS } from "../server/games.ts";
+import { Games, MAX_PINGS } from "../server/games.ts";
 import { Database } from "../server/db.ts";
-import { SAVE_CEILING_MS, SAVE_DELAY_MS, SceneMemory } from "../server/scenes.ts";
-import { MAX_STREAMS_PER_USER } from "../server/stream.ts";
+import { IDLE_UNLOAD_MS, SAVE_CEILING_MS, SAVE_DELAY_MS, SceneMemory } from "../server/scenes.ts";
+import { HEARTBEAT_MS, MAX_STREAMS_PER_USER, Streams } from "../server/stream.ts";
+import { SESSION_LIFETIME_MS } from "../server/auth.ts";
 
 // ---- a site in a temporary folder, with open registration so users are quick to make ----
 
@@ -37,8 +41,8 @@ afterEach(async () => {
   for (const cleanup of cleanups.splice(0).reverse()) await cleanup();
 });
 
-async function start(dir: string, clock: { now: number }): Promise<Site> {
-  const server = await startServer({ dataDir: dir, host: "127.0.0.1", port: 0, now: () => clock.now, log: () => undefined });
+async function start(dir: string, clock: { now: number }, heartbeatMs?: number): Promise<Site> {
+  const server = await startServer({ dataDir: dir, host: "127.0.0.1", port: 0, now: () => clock.now, heartbeatMs, log: () => undefined });
   return { dir, server, base: `http://127.0.0.1:${server.port}`, clock };
 }
 
@@ -67,10 +71,15 @@ interface Person {
 }
 
 /** A site with users registered under these logins; the first one is the administrator. */
-async function siteWith(...logins: string[]): Promise<{ site: Site; users: Record<string, Person> }> {
+function siteWith(...logins: string[]): Promise<{ site: Site; users: Record<string, Person> }> {
+  return siteOf({}, ...logins);
+}
+
+/** The same, with the heartbeat of the streams this often instead of every 25 s. */
+async function siteOf(options: { heartbeatMs?: number }, ...logins: string[]): Promise<{ site: Site; users: Record<string, Person> }> {
   const dir = mkdtempSync(path.join(tmpdir(), "bm-stream-"));
   writeFileSync(path.join(dir, "settings.json"), JSON.stringify({ openRegistration: true }));
-  const site = await start(dir, { now: Date.UTC(2026, 0, 1) });
+  const site = await start(dir, { now: Date.UTC(2026, 0, 1) }, options.heartbeatMs);
   cleanups.push(async () => {
     await site.server.close();
     rmSync(dir, { recursive: true, force: true });
@@ -459,6 +468,43 @@ describe("rights of a player on the board (plan 5.4, R6)", () => {
     assertError(await patch(site, gameId, sceneId, users.pat, "tokens"), "scene.patch");
   });
 
+  test("an empty change is 400 for the player and the master: the version stays and nobody gets an event", async () => {
+    const { site, users, gameId, sceneId, gm } = await board();
+    const pat = await Reader.of(site, gameId, users.pat);
+    await pat.next("scene.snapshot");
+    assertError(await patch(site, gameId, sceneId, users.pat, []), "scene.patch", "the player");
+    assertError(await patch(site, gameId, sceneId, users.gm, []), "scene.patch", "the master");
+    assert.equal((await scene(site, gameId, sceneId, users.gm)).version, 1);
+    await gm.none("scene.patch");
+    await pat.none("scene.patch", 0);
+  });
+
+  test("__proto__ and constructor in a player's change are refused: the scene and the objects stay as they were", async () => {
+    const { site, users, gameId, sceneId, gm } = await board();
+    const before = await scene(site, gameId, sceneId, users.gm);
+    const hero = JSON.stringify(token("Герой", "players", 1, 1)).slice(1, -1);
+    // Written as JSON text: in a JS object literal `__proto__` would set the prototype instead of a key.
+    // A key the scene does not have is not a move (403); a field a token does not have is not a token (400).
+    const refused: [string, string, ErrorCode][] = [
+      ["the key __proto__", `[["tokens","__proto__",{${hero}}]]`, "scene.patch"],
+      ["the key constructor", `[["tokens","constructor",{${hero}}]]`, "auth.forbidden"],
+      ["a field __proto__", `[["tokens","hero",{${hero},"__proto__":{"side":"enemies"}}]]`, "scene.patch"],
+      ["a field constructor", `[["tokens","hero",{${hero},"constructor":{"prototype":{"polluted":true}}}]]`, "scene.patch"],
+    ];
+    for (const [what, change, code] of refused) {
+      const response = await fetch(`${site.base}/api/games/${gameId}/scenes/${sceneId}/patch`, {
+        method: "POST",
+        headers: { Origin: site.base, "Content-Type": "application/json", Cookie: users.pat.cookie },
+        body: `{"patch":${change}}`,
+      });
+      assertError({ status: response.status, body: await response.json() }, code, what);
+    }
+    assert.deepEqual(await scene(site, gameId, sceneId, users.gm), before);
+    assert.equal(({} as Record<string, unknown>).polluted, undefined);
+    assert.equal(({} as Record<string, unknown>).side, undefined);
+    await gm.none("scene.patch");
+  });
+
   test("a player changes only the current visible scene: a hidden one, or the current one hidden, is 404", async () => {
     const { site, users, gameId, sceneId } = await board();
     const other = (await call(site, "POST", `/api/games/${gameId}/scenes`, users.gm.cookie, { name: "Лес" })).body.id;
@@ -599,6 +645,41 @@ describe("streams close at once", () => {
     assert.ok(!there.ended, "the other device stays");
   });
 
+  test("signing out with a cookie whose session already expired still closes its streams", async () => {
+    const { site, users } = await siteWith("admin", "gm", "pat");
+    const { gameId } = await playedGame(site, users.gm, users.pat);
+    const pat = await Reader.of(site, gameId, users.pat);
+    const gm = await Reader.of(site, gameId, users.gm);
+    site.clock.now += SESSION_LIFETIME_MS + 1;
+    assert.equal((await call(site, "POST", "/api/auth/logout", users.pat.cookie)).status, 204);
+    await pat.closedByServer();
+    await wait(100);
+    assert.ok(!gm.ended, "another user's stream stays");
+  });
+
+  test("on a heartbeat a stream whose session expired or was deleted is closed; a live one stays", async () => {
+    const { site, users } = await siteOf({ heartbeatMs: 50 }, "admin", "gm", "pat", "eve");
+    const { gameId } = await playedGame(site, users.gm, users.pat);
+    await call(site, "POST", `/api/games/${gameId}/invites`, users.gm.cookie, { maxUses: 1, days: 7 }).then((invite) =>
+      call(site, "POST", `/api/join/${invite.body.code}`, users.eve.cookie),
+    );
+    const pat = await Reader.of(site, gameId, users.pat);
+    const eve = await Reader.of(site, gameId, users.eve);
+    // Pat's session is gone from the database without a sign-out through this server (as when it expired and was cleaned).
+    const db = new DatabaseSync(path.join(site.dir, "battlemap.db"));
+    try {
+      db.prepare("DELETE FROM sessions WHERE user_id = ?").run(users.pat.id);
+    } finally {
+      db.close();
+    }
+    await pat.closedByServer();
+    await wait(150);
+    assert.ok(!eve.ended, "a live session keeps its stream over several heartbeats");
+    // Everyone's session runs out: gm and eve used theirs last at the start.
+    site.clock.now += SESSION_LIFETIME_MS + 1;
+    await eve.closedByServer();
+  });
+
   test("a new password closes the streams of the other sessions; a reset or disabling closes all of them", async () => {
     const { site, users } = await siteWith("admin", "gm", "pat");
     const { gameId } = await playedGame(site, users.gm, users.pat);
@@ -638,6 +719,58 @@ describe("streams close at once", () => {
   });
 });
 
+describe(`the heartbeat every ${HEARTBEAT_MS / 1000} s (artificial clocks)`, () => {
+  /** The part of an HTTP answer a stream uses. */
+  class FakeResponse extends EventEmitter {
+    written = "";
+    writableEnded = false;
+    destroyed = false;
+    writableLength = 0;
+    writeHead(): void {}
+    write(text: string): void {
+      this.written += text;
+    }
+    end(): void {
+      this.writableEnded = true;
+      this.emit("close");
+    }
+    destroy(): void {
+      this.destroyed = true;
+      this.emit("close");
+    }
+  }
+
+  test("a comment line goes every 25 s to a stream of a live session; a dead session's stream is closed then instead", (t) => {
+    t.mock.timers.enable({ apis: ["setInterval"] });
+    const dead = new Set<string>();
+    const streams = new Streams((tokenHash) => !dead.has(tokenHash.toString("hex")));
+    t.after(() => streams.closeAll());
+    const live = new FakeResponse();
+    const ending = new FakeResponse();
+    streams.open(live as unknown as ServerResponse, 1, 1, Buffer.from("aa", "hex"), {});
+    streams.open(ending as unknown as ServerResponse, 2, 1, Buffer.from("bb", "hex"), {});
+
+    t.mock.timers.tick(HEARTBEAT_MS - 1);
+    assert.deepEqual([live.written, ending.written], ["", ""], "nothing before 25 s");
+    t.mock.timers.tick(1);
+    assert.deepEqual([live.written, ending.written], [":\n\n", ":\n\n"]);
+
+    dead.add("bb");
+    live.written = "";
+    ending.written = "";
+    t.mock.timers.tick(HEARTBEAT_MS);
+    // Then who is online, since the other stream went.
+    assert.equal(live.written, `:\n\nevent: presence\ndata: {"online":[1]}\n\n`);
+    assert.equal(ending.written, "", "no heartbeat to a dead session");
+    assert.equal(ending.writableEnded, true, "the dead session's stream is closed");
+    assert.equal(live.writableEnded, false);
+    assert.deepEqual(
+      streams.ofGame(1).map((stream) => stream.userId),
+      [1],
+    );
+  });
+});
+
 describe("pings (R6)", () => {
   test("a ping of a player reaches everyone who sees the scene, with the author's name, and is not stored", async () => {
     const { site, users } = await siteWith("admin", "gm", "pat", "sam");
@@ -672,6 +805,21 @@ describe("pings (R6)", () => {
     await pat.none("ping");
   });
 
+  test("a ping from another site is 403, one that is not JSON 415, and neither reaches anyone", async () => {
+    const { site, users } = await siteWith("admin", "gm", "pat");
+    const { gameId } = await playedGame(site, users.gm, users.pat);
+    const gm = await Reader.of(site, gameId, users.gm);
+    const send = async (headers: Record<string, string>, body: string): Promise<Reply> => {
+      const response = await fetch(`${site.base}/api/games/${gameId}/ping`, { method: "POST", headers: { Cookie: users.pat.cookie, ...headers }, body });
+      return { status: response.status, body: await response.json() };
+    };
+    const point = JSON.stringify({ x: 0, y: 0 });
+    assertError(await send({ Origin: "http://evil.example", "Content-Type": "application/json" }, point), "request.origin", "a foreign Origin");
+    assertError(await send({ Origin: site.base, "Content-Type": "text/plain" }, point), "request.contentType", "text/plain");
+    assertError(await send({ Origin: site.base, "Content-Type": "application/x-www-form-urlencoded" }, "x=0&y=0"), "request.contentType", "a form");
+    await gm.none("ping");
+  });
+
   test(`at most ${MAX_PINGS} pings a second per user: more are 429 and reach nobody`, async () => {
     const { site, users } = await siteWith("admin", "gm", "pat");
     const { gameId } = await playedGame(site, users.gm, users.pat);
@@ -688,25 +836,35 @@ describe("pings (R6)", () => {
   });
 });
 
+/** A database in a temporary folder, for tests on artificial clocks without the HTTP server. */
+function tempDatabase(t: TestContext): Database {
+  const dir = mkdtempSync(path.join(tmpdir(), "bm-stream-"));
+  const db = new Database(path.join(dir, "battlemap.db"));
+  t.after(() => {
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
+  return db;
+}
+
+function insertPerson(db: Database, login: string) {
+  return db.insertUser({
+    login,
+    displayName: login.toUpperCase(),
+    passHash: new Uint8Array(32),
+    passSalt: new Uint8Array(16),
+    passParams: "scrypt:32768:8:1",
+    role: "user",
+    mustChangePassword: false,
+    createdAt: 0,
+  });
+}
+
 describe("writing scenes to the database (plan 8.6)", () => {
   test(`changes that never pause are written at most ${SAVE_CEILING_MS / 1000} s after the first one (artificial clocks)`, (t) => {
     t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
-    const dir = mkdtempSync(path.join(tmpdir(), "bm-stream-"));
-    const db = new Database(path.join(dir, "battlemap.db"));
-    t.after(() => {
-      db.close();
-      rmSync(dir, { recursive: true, force: true });
-    });
-    const owner = db.insertUser({
-      login: "gm_",
-      displayName: "GM",
-      passHash: new Uint8Array(32),
-      passSalt: new Uint8Array(16),
-      passParams: "scrypt:32768:8:1",
-      role: "user",
-      mustChangePassword: false,
-      createdAt: 0,
-    });
+    const db = tempDatabase(t);
+    const owner = insertPerson(db, "gm_");
     const game = db.insertGame("Склеп", "gm", owner.id, owner.id, 0);
     const sceneId = db.insertScene(game.id, "Зал", JSON.stringify(newScene()), 0).id;
     const failures: unknown[] = [];
@@ -740,6 +898,115 @@ describe("writing scenes to the database (plan 8.6)", () => {
     // After the last change the usual second.
     t.mock.timers.tick(SAVE_DELAY_MS);
     assert.equal(record().version, inMemory);
+  });
+
+  test(`a player's frequent small moves do not put the write off past ${SAVE_CEILING_MS / 1000} s; empty changes are refused`, (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "setInterval", "Date"], now: 0 });
+    const db = tempDatabase(t);
+    const streams = new Streams(() => true);
+    t.after(() => streams.closeAll());
+    const games = new Games(db, () => Date.now(), streams, (error) => assert.fail(String(error)));
+    const gm = insertPerson(db, "gm_");
+    const pat = insertPerson(db, "pat");
+    const gameId = games.createGame(gm, "Склеп", "gm").id;
+    const sceneId = games.createScene(gm, gameId, "Зал").id;
+    games.updateScene(gm, gameId, sceneId, { visible: true });
+    db.insertMember(gameId, pat.id, "player", 0);
+    games.patchScene(gm, gameId, sceneId, [["tokens", "hero", token("Герой", "players", 0, 0)]]);
+    t.mock.timers.tick(SAVE_DELAY_MS);
+    const storedVersion = (): number | undefined => db.findScene(gameId, sceneId)?.version;
+    assert.equal(storedVersion(), 1);
+
+    // A move and an empty change every 300 ms for 12 s; the database is looked at every 100 ms.
+    const STEP_MS = 300;
+    const LOOK_MS = 100;
+    const start = Date.now();
+    let firstWrite: number | null = null;
+    let version = 1;
+    for (let step = 0; step < 12_000 / STEP_MS; step++) {
+      assert.throws(
+        () => games.patchScene(pat, gameId, sceneId, []),
+        (error) => error instanceof ApiError && error.code === "scene.patch",
+      );
+      version = games.patchScene(pat, gameId, sceneId, [["tokens", "hero", token("Герой", "players", step % 2, 0)]]).version;
+      for (let looked = 0; looked < STEP_MS; looked += LOOK_MS) {
+        t.mock.timers.tick(LOOK_MS);
+        if (firstWrite === null && storedVersion() !== 1) firstWrite = Date.now() - start;
+      }
+    }
+    assert.ok(firstWrite !== null && firstWrite <= SAVE_CEILING_MS, `the first write ${firstWrite} ms after the first move`);
+    assert.equal(version, 1 + 12_000 / STEP_MS, "only the moves raised the version");
+    t.mock.timers.tick(SAVE_DELAY_MS);
+    assert.equal(storedVersion(), version);
+  });
+
+  test("over the memory limit the scenes changed longest ago are written and dropped; nothing is lost", (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+    const db = tempDatabase(t);
+    const owner = insertPerson(db, "gm_");
+    const game = db.insertGame("Склеп", "gm", owner.id, owner.id, 0);
+    const [a, b, c] = ["A", "B", "C"].map((name) => db.insertScene(game.id, name, JSON.stringify(newScene()), 0).id);
+    const record = (sceneId: number) => {
+      const found = db.findScene(game.id, sceneId);
+      assert.ok(found);
+      return found;
+    };
+    // Room for two scenes of one cell, not for three.
+    const probe = newScene();
+    applyPatch(probe, [["cells", "0,0", "floor"]]);
+    const size = Buffer.byteLength(JSON.stringify(probe));
+    const memory = new SceneMemory(db, () => Date.now(), (error) => assert.fail(String(error)), 2 * size + Math.floor(size / 2));
+
+    const oneCell: Patch = [["cells", "0,0", "floor"]];
+    memory.change(record(a), oneCell);
+    t.mock.timers.tick(100);
+    memory.change(record(b), oneCell);
+    t.mock.timers.tick(100);
+    // A again: now B is the one changed longest ago.
+    assert.equal(memory.change(record(a), oneCell), 2);
+    t.mock.timers.tick(100);
+    memory.change(record(c), oneCell);
+
+    assert.deepEqual([memory.isLoaded(a), memory.isLoaded(b), memory.isLoaded(c)], [true, false, true]);
+    assert.equal(memory.bytes, 2 * size);
+    assert.deepEqual([record(b).version, JSON.parse(record(b).stateJson).cells], [1, { "0,0": "floor" }], "B is written before it is dropped");
+    assert.deepEqual([record(a).version, record(c).version], [0, 0], "the others wait for their second");
+
+    // The next change of B reads it from the database and goes on from its version.
+    assert.equal(memory.change(record(b), [["cells", "1,0", "floor"]]), 2);
+    assert.equal(memory.isLoaded(a), false, "now A is the one changed longest ago");
+    assert.deepEqual([record(a).version, JSON.parse(record(a).stateJson).cells], [2, { "0,0": "floor" }]);
+    t.mock.timers.tick(SAVE_DELAY_MS);
+    assert.deepEqual(
+      [a, b, c].map((sceneId) => [record(sceneId).version, JSON.parse(record(sceneId).stateJson).cells]),
+      [
+        [2, { "0,0": "floor" }],
+        [2, { "0,0": "floor", "1,0": "floor" }],
+        [1, { "0,0": "floor" }],
+      ],
+    );
+  });
+
+  test(`a written scene stays in memory until ${IDLE_UNLOAD_MS / 1000} s after its last change`, (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: 0 });
+    const db = tempDatabase(t);
+    const owner = insertPerson(db, "gm_");
+    const game = db.insertGame("Склеп", "gm", owner.id, owner.id, 0);
+    const sceneId = db.insertScene(game.id, "Зал", JSON.stringify(newScene()), 0).id;
+    const record = () => {
+      const found = db.findScene(game.id, sceneId);
+      assert.ok(found);
+      return found;
+    };
+    const memory = new SceneMemory(db, () => Date.now(), (error) => assert.fail(String(error)));
+    memory.change(record(), [["cells", "0,0", "floor"]]);
+    t.mock.timers.tick(SAVE_DELAY_MS);
+    assert.deepEqual([record().version, memory.isLoaded(sceneId)], [1, true], "written and still in memory");
+    t.mock.timers.tick(IDLE_UNLOAD_MS - SAVE_DELAY_MS - 1);
+    assert.equal(memory.isLoaded(sceneId), true);
+    t.mock.timers.tick(1);
+    assert.deepEqual([memory.isLoaded(sceneId), memory.bytes], [false, 0]);
+    assert.equal(memory.change(record(), [["cells", "1,0", "floor"]]), 2, "read again from the database");
   });
 
   test("a change is written a second after the last change of the scene", async () => {

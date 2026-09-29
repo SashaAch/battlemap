@@ -426,6 +426,8 @@ export class Games {
       if (error instanceof SceneError) throw new ApiError("scene.patch");
       throw error;
     }
+    // An empty change would only raise the version and wake everyone (and `[].every` below is true).
+    if (patch.length === 0) throw new ApiError("scene.patch");
     if (!access.editor) {
       // Stored scenes were checked when written, so the tokens in them are well-formed.
       const scene = this.#memory.read(record).scene as Scene;
