@@ -25,6 +25,17 @@ export const ERRORS = {
   "password.same": 400,
   "admin.self": 400,
   "user.notFound": 404,
+  "game.notFound": 404,
+  "game.title": 400,
+  "member.notFound": 404,
+  "member.protected": 400,
+  "scene.notFound": 404,
+  "scene.name": 400,
+  "scene.patch": 400,
+  "scene.tooLarge": 413,
+  "invite.notFound": 404,
+  "invite.expired": 410,
+  "invite.tooManyAttempts": 429,
   "server.error": 500,
 } as const;
 

@@ -1,8 +1,13 @@
 // Start-up: interface language, theme, draft in localStorage, toolbar with the tools, palette, status bar and the board;
-// then the account part (app/login.ts), which finds out whether a server is there (plan 5.3).
+// then the account part (app/login.ts), which finds out whether a server is there (plan 5.3), and the games
+// (app/game.ts), which put a scene from the server on the board instead of the draft.
 
 import { showAdmin } from "./app/admin.ts";
+import { forwardPatch } from "./app/api.ts";
 import type { AccountSettings } from "./app/api.ts";
+import { startGame } from "./app/game.ts";
+import type { GameBoard } from "./app/game.ts";
+import { showGames } from "./app/games.ts";
 import { startAccount } from "./app/login.ts";
 import { EDGE_TYPES, isSideId, isSizeId, MARK_COLORS, OBJECT_TYPES, SIDES, SIZES, TERRAIN } from "./board/catalog.ts";
 import type { TerrainId } from "./board/catalog.ts";
@@ -15,7 +20,7 @@ import { ENCLOSE_LIMIT, ERASE_FILTERS } from "./board/edit.ts";
 import { applyToChange, beginChange, DIAGONAL_RULES, diagonalRule, finishChange, isToken, newHistory, redo, undo } from "./board/store.ts";
 import type { Patch } from "./board/store.ts";
 import { attachTools, BRUSH_SIZES, TOOLS } from "./board/tools.ts";
-import type { Board } from "./board/tools.ts";
+import type { Board, Tool } from "./board/tools.ts";
 import { openDraft, saveDraft } from "./draft.ts";
 import type { DraftProblem, DraftStorage } from "./draft.ts";
 import { defaultLang, getLang, isKey, isLang, LANGS, setLang, t } from "./i18n/index.ts";
@@ -25,6 +30,8 @@ import { isThemeChoice, startThemes, THEME_CHOICES } from "./theme.ts";
 const LANG_KEY = "battlemap.lang";
 const THEME_KEY = "battlemap.theme";
 const DRAFT_SAVE_DELAY_MS = 1000;
+/** Tools a read-only board keeps: looking around and measuring (players get more in stage 6). */
+const READ_ONLY_TOOLS: readonly Tool[] = ["select", "ruler"];
 
 const DRAFT_NOTICE: Record<DraftProblem, Key> = {
   newer: "notice.draftNewer",
@@ -146,13 +153,22 @@ noticeClose.addEventListener("click", () => {
 
 const draft = openDraft(storage);
 if (draft.problem) showNotice(DRAFT_NOTICE[draft.problem]);
+/** The undo history of the draft, kept while a game scene is on the board. */
+let draftHistory = newHistory();
+
+/**
+ * A game scene on the board (app/game.ts), null for the draft. `changed` gets every finished change;
+ * null makes the board read-only.
+ */
+let game: { changed: ((patch: Patch) => void) | null } | null = null;
+const readOnly = (): boolean => game !== null && game.changed === null;
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
 function saveNow(): void {
   clearTimeout(saveTimer);
   saveTimer = undefined;
-  if (!saveDraft(storage, board.scene)) showNotice("notice.storageFailed");
+  if (!saveDraft(storage, draft.scene)) showNotice("notice.storageFailed");
 }
 
 function scheduleSave(): void {
@@ -217,10 +233,21 @@ function updateHistoryButtons(): void {
   redoButton.disabled = board.history.redo.length === 0;
 }
 
-function sceneChanged(): void {
+const lastPatch = (list: readonly Patch[]): Patch => list[list.length - 1] ?? [];
+
+/** After a finished change, an undo or a redo; `inverse` is its inverse patch, which names every entry it touched. */
+function sceneChanged(inverse: Patch): void {
+  if (readOnly()) {
+    // A read-only board does not change: whatever a tool did (a dragged token, Delete) is taken back.
+    undo(board.scene, board.history);
+    board.history = newHistory();
+  } else if (game?.changed) {
+    game.changed(forwardPatch(board.scene, inverse));
+  } else {
+    scheduleSave();
+  }
   updateHistoryButtons();
   diagonalSelect.value = diagonalRule(board.scene);
-  scheduleSave();
   redraw();
 }
 
@@ -229,16 +256,16 @@ function commit(patch: Patch): void {
   if (patch.length === 0 || board.history.open) return;
   beginChange(board.history);
   applyToChange(board.scene, board.history, patch);
-  if (finishChange(board.history)) sceneChanged();
+  if (finishChange(board.history)) sceneChanged(lastPatch(board.history.undo));
 }
 
 // Both do nothing while a stroke is under way (see beginChange in store.ts).
 function doUndo(): void {
-  if (undo(board.scene, board.history)) sceneChanged();
+  if (undo(board.scene, board.history)) sceneChanged(lastPatch(board.history.redo));
 }
 
 function doRedo(): void {
-  if (redo(board.scene, board.history)) sceneChanged();
+  if (redo(board.scene, board.history)) sceneChanged(lastPatch(board.history.undo));
 }
 
 undoButton.addEventListener("click", doUndo);
@@ -305,6 +332,11 @@ const markEraseFilter = choiceButtons(eraseFilters, ERASE_FILTERS, (filter) => `
 // Each tool shows only its own options: size for the brush and the eraser, edge type for walls, filter for the eraser,
 // the symbol for objects, side, size and name for tokens, colour for the pencil.
 function updateTools(): void {
+  if (readOnly() && !READ_ONLY_TOOLS.includes(board.tool)) board.tool = "select";
+  TOOLS.forEach((tool, index) => {
+    const element = toolList.children[index];
+    if (element instanceof HTMLElement) element.hidden = readOnly() && !READ_ONLY_TOOLS.includes(tool);
+  });
   markTool(board.tool);
   sizeGroup.hidden = board.tool !== "brush" && board.tool !== "eraser";
   edgeGroup.hidden = board.tool !== "walls";
@@ -448,7 +480,7 @@ let editedToken: string | null = null;
 
 function openTokenEditor(id: string): void {
   const token = board.scene.tokens[id];
-  if (!isToken(token) || board.history.open) return;
+  if (!isToken(token) || board.history.open || readOnly()) return;
   editedToken = id;
   editSide.value = token.side;
   editSize.value = token.size;
@@ -505,7 +537,7 @@ themeSelect.addEventListener("change", () => {
 
 const tools = attachTools(canvas, board, {
   redraw,
-  committed: sceneChanged,
+  committed: () => sceneChanged(lastPatch(board.history.undo)),
   hoverChanged: updateStatus,
   brushSizeChanged: updateBrushSizes,
   toolChanged: updateTools,
@@ -543,4 +575,59 @@ function applyAccountSettings(settings: AccountSettings): void {
   }
 }
 
-const account = startAccount({ applySettings: applyAccountSettings, showNotice, showAdmin });
+// ---- games: a scene from the server instead of the draft (plan 5.3, 8.5) ----
+
+/** After switching between the draft and a game scene, or between an editable and a read-only one. */
+function boardModeChanged(): void {
+  document.body.classList.toggle("read-only", readOnly());
+  diagonalSelect.disabled = readOnly();
+  updateTools();
+  updateHistoryButtons();
+  diagonalSelect.value = diagonalRule(board.scene);
+  redraw();
+}
+
+const gameBoard: GameBoard = {
+  show(scene, changed) {
+    if (!game) {
+      if (saveTimer !== undefined) saveNow();
+      draftHistory = board.history;
+    }
+    game = { changed };
+    board.scene = scene;
+    board.history = newHistory();
+    board.selection = null;
+    boardModeChanged();
+  },
+  showDraft() {
+    if (!game) return;
+    game = null;
+    board.scene = draft.scene;
+    board.history = draftHistory;
+    board.selection = null;
+    boardModeChanged();
+  },
+  busy: () => board.history.open !== null,
+};
+
+const games = startGame({
+  board: gameBoard,
+  showNotice,
+  failed: (error) => account.failed(error),
+  showGames: () => account.showGames(),
+});
+
+const account = startAccount({
+  applySettings: applyAccountSettings,
+  showNotice,
+  showAdmin,
+  showGames: (screen, actions, joinCode) => {
+    const openGame = (gameId: number): void => {
+      actions.close();
+      games.open(gameId);
+    };
+    showGames(screen, { ...actions, openGame }, joinCode);
+  },
+  signedIn: games.reopen,
+  signedOut: games.close,
+});

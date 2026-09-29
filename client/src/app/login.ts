@@ -11,12 +11,27 @@ export interface AccountHooks {
   applySettings(settings: AccountSettings): void;
   showNotice(key: Key): void;
   /** Fills `screen` with the administration screen (admin.ts). */
-  showAdmin(screen: HTMLElement, me: Me, actions: { close(): void; failed(error: unknown): void }): void;
+  showAdmin(screen: HTMLElement, me: Me, actions: ScreenActions): void;
+  /** Fills `screen` with "my games" (games.ts); `joinCode` comes from an invite link. */
+  showGames(screen: HTMLElement, actions: ScreenActions, joinCode: string): void;
+  /** A user is signed in and may use the site (no password to replace). */
+  signedIn(): void;
+  /** Nobody is signed in any more. */
+  signedOut(): void;
+}
+
+export interface ScreenActions {
+  close(): void;
+  /** A failure that ends the screen, such as an ended session. */
+  failed(error: unknown): void;
 }
 
 export interface Account {
   /** Keeps a language or theme change in the account; does nothing without a signed-in user. */
   saveSettings(change: AccountSettings): void;
+  /** A failed request outside a form: an ended session goes back to sign-in, anything else is a notice. */
+  failed(error: unknown): void;
+  showGames(): void;
 }
 
 // ---- small DOM helpers, shared with admin.ts ----
@@ -129,16 +144,19 @@ export function startAccount(hooks: AccountHooks): Account {
   const adminButton = button("account.admin", () => {
     if (me) hooks.showAdmin(open(), me, { close: closeScreen, failed });
   });
+  const gamesButton = button("account.games", () => showGames(""));
   const logoutButton = button("account.logout", () => {
     request("POST", "api/auth/logout").then(restart, failed);
   });
-  bar.append(name, passwordButton, adminButton, logoutButton);
+  bar.append(name, gamesButton, passwordButton, adminButton, logoutButton);
   toolbar.append(bar);
 
   let me: Me | null = null;
   let openRegistration = false;
   const setupToken = takeFromHash("setup");
   const inviteCode = takeFromHash("register");
+  /** A game invite code from a link, put in "my games" once the user is signed in. */
+  let joinCode = takeFromHash("join");
 
   function open(): HTMLElement {
     screen.replaceChildren();
@@ -151,22 +169,37 @@ export function startAccount(hooks: AccountHooks): Account {
     screen.hidden = true;
   }
 
+  function showGames(code: string): void {
+    if (me && !me.mustChangePassword) hooks.showGames(open(), { close: closeScreen, failed }, code);
+  }
+
   function signedIn(user: Me): void {
     me = user;
     name.textContent = user.displayName;
     name.title = user.login;
     adminButton.hidden = user.role !== "admin" || user.mustChangePassword;
+    gamesButton.hidden = user.mustChangePassword;
     passwordButton.hidden = user.mustChangePassword;
     bar.hidden = false;
     hooks.applySettings(user.settings);
-    if (user.mustChangePassword) showPassword(true);
-    else closeScreen();
+    if (user.mustChangePassword) {
+      showPassword(true);
+      return;
+    }
+    if (joinCode) {
+      showGames(joinCode);
+      joinCode = null;
+    } else {
+      closeScreen();
+    }
+    hooks.signedIn();
   }
 
   function signedOut(registration: boolean): void {
     me = null;
     openRegistration = registration;
     bar.hidden = true;
+    hooks.signedOut();
     showSignIn();
   }
 
@@ -178,6 +211,7 @@ export function startAccount(hooks: AccountHooks): Account {
       else {
         me = null;
         bar.hidden = true;
+        hooks.signedOut();
         closeScreen();
       }
     });
@@ -185,7 +219,7 @@ export function startAccount(hooks: AccountHooks): Account {
 
   /** A failed request outside a form: an ended session goes back to sign-in, anything else is a notice. */
   function failed(error: unknown): void {
-    if (codeOf(error) === "auth.required") restart();
+    if (codeOf(error) === "auth.required" || codeOf(error) === "auth.mustChangePassword") restart();
     else hooks.showNotice(codeOf(error) === "network" ? "notice.serverUnreachable" : "notice.requestFailed");
   }
 
@@ -312,6 +346,8 @@ export function startAccount(hooks: AccountHooks): Account {
   });
 
   return {
+    failed,
+    showGames: () => showGames(""),
     saveSettings(change) {
       if (!me || me.mustChangePassword) return;
       request("PUT", "api/me/settings", change).catch((error: unknown) => {

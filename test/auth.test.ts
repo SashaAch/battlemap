@@ -927,7 +927,8 @@ describe("error codes", () => {
   });
 
   test("every status matches plan 6.4", () => {
-    const allowed = new Set([400, 401, 403, 404, 413, 415, 429, 500]);
+    // 410: an expired game invite (plan 8.5).
+    const allowed = new Set([400, 401, 403, 404, 410, 413, 415, 429, 500]);
     for (const [code, status] of Object.entries(ERRORS)) assert.ok(allowed.has(status), `${code}: ${status}`);
   });
 });

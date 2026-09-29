@@ -1,6 +1,7 @@
 // Requests to the server (plan 6.4). Paths are relative, so the page also works from a sub-folder (GitHub Pages).
 // No DOM here.
 
+import type { Patch, Scene } from "../board/store.ts";
 import type { LANGS } from "../i18n/index.ts";
 import type { THEME_CHOICES } from "../theme.ts";
 
@@ -21,6 +22,68 @@ export interface UserInfo {
 
 export interface Me extends UserInfo {
   settings: AccountSettings;
+}
+
+// ---- games (server/games.ts) ----
+
+export type GameKind = "gm" | "personal";
+export type MemberRole = "gm" | "player";
+
+/** A game in "my games". */
+export interface GameSummary {
+  id: number;
+  title: string;
+  kind: GameKind;
+  role: MemberRole;
+  isOwner: boolean;
+  hasMaster: boolean;
+}
+
+export interface MemberInfo {
+  id: number;
+  displayName: string;
+  role: MemberRole;
+}
+
+export interface SceneSummary {
+  id: number;
+  name: string;
+  visible: boolean;
+  /** The current scene of the game. */
+  active: boolean;
+  version: number;
+}
+
+/** A game as its member sees it; a player gets only the current scene, and only while it is visible. */
+export interface GameInfo {
+  id: number;
+  title: string;
+  kind: GameKind;
+  ownerId: number;
+  gmId: number | null;
+  role: MemberRole;
+  isOwner: boolean;
+  /** Changes scenes, invites, members and the master. */
+  editor: boolean;
+  activeSceneId: number | null;
+  members: MemberInfo[];
+  scenes: SceneSummary[];
+}
+
+export interface SceneData extends SceneSummary {
+  /** The scene (plan 6.1), not yet checked. */
+  scene: unknown;
+}
+
+/**
+ * The change sent to the server after a change of the board: every entry the inverse patch names, with its
+ * value now (null when it is gone). Brings the server's copy from before to now for a new change, an undo and a redo.
+ */
+export function forwardPatch(scene: Scene, inverse: Patch): Patch {
+  return inverse.map(([collection, key]) => {
+    const entries = scene[collection];
+    return [collection, key, Object.hasOwn(entries, key) ? entries[key] : null];
+  });
 }
 
 /** What the page is at start-up (plan 5.3). */
@@ -82,7 +145,7 @@ export async function detectMode(): Promise<Mode> {
 }
 
 /** Sends a request; a change always goes as JSON (the server refuses anything else). Throws ApiFailure. */
-export async function request<T>(method: "GET" | "POST" | "PUT", path: string, body?: object): Promise<T> {
+export async function request<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: object): Promise<T> {
   const init: RequestInit = { method, credentials: "same-origin" };
   if (method !== "GET") {
     init.headers = { "Content-Type": "application/json" };
