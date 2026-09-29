@@ -1,5 +1,9 @@
-// Start-up: interface language, theme, draft in localStorage, toolbar, palette, status bar and the board.
+// Start-up: interface language, theme, draft in localStorage, toolbar, palette, status bar and the board;
+// then the account part (app/login.ts), which finds out whether a server is there (plan 5.3).
 
+import { showAdmin } from "./app/admin.ts";
+import type { AccountSettings } from "./app/api.ts";
+import { startAccount } from "./app/login.ts";
 import { TERRAIN } from "./board/catalog.ts";
 import type { TerrainId } from "./board/catalog.ts";
 import { brushSquare, cellAt, DEFAULT_SCALE, panBy } from "./board/geometry.ts";
@@ -264,6 +268,7 @@ languageSelect.addEventListener("change", () => {
   setLang(languageSelect.value);
   writeSetting(LANG_KEY, languageSelect.value);
   applyLanguage();
+  account.saveSettings({ lang: languageSelect.value });
 });
 
 const storedTheme = readSetting(THEME_KEY);
@@ -283,6 +288,7 @@ themeSelect.addEventListener("change", () => {
   if (!isThemeChoice(themeSelect.value)) return;
   writeSetting(THEME_KEY, themeSelect.value);
   setTheme(themeSelect.value);
+  account.saveSettings({ theme: themeSelect.value });
 });
 
 attachTools(canvas, board, {
@@ -299,3 +305,21 @@ updateTerrainButtons();
 updateHistoryButtons();
 applyLanguage();
 redraw();
+
+// ---- account: a signed-in user's language and theme come from the account (plan 5.15) ----
+
+function applyAccountSettings(settings: AccountSettings): void {
+  if (settings.lang && settings.lang !== getLang()) {
+    setLang(settings.lang);
+    languageSelect.value = settings.lang;
+    writeSetting(LANG_KEY, settings.lang);
+    applyLanguage();
+  }
+  if (settings.theme && settings.theme !== themeSelect.value) {
+    themeSelect.value = settings.theme;
+    writeSetting(THEME_KEY, settings.theme);
+    setTheme(settings.theme);
+  }
+}
+
+const account = startAccount({ applySettings: applyAccountSettings, showNotice, showAdmin });
