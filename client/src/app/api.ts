@@ -36,6 +36,17 @@ export interface Me extends UserInfo {
   settings: AccountSettings;
 }
 
+/** A registration code or game invite that still lets someone in, in the administrator's list (R50); never the code. */
+export interface AdminInvite {
+  id: number;
+  kind: "register" | "game";
+  creatorName: string;
+  /** The game of a game invite, null for a registration code. */
+  gameTitle: string | null;
+  usesLeft: number;
+  expiresAt: number;
+}
+
 /** The answer to a registration: the new user, and the game an administrator's invite made them a player of (R43). */
 export interface Registered extends Me {
   gameId: number | null;
@@ -103,6 +114,14 @@ export interface GameInvite {
   expiresAt: number;
   maxUses: number;
   links: InviteLink[];
+}
+
+/** An invite of a game that still lets someone in, in its editor's list (R52); never the code. */
+export interface ActiveGameInvite {
+  id: number;
+  creatorName: string;
+  usesLeft: number;
+  expiresAt: number;
 }
 
 export interface SceneData extends SceneSummary {

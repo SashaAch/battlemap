@@ -788,6 +788,25 @@ input[type="color"] {
   gap: 4px 8px;
 }
 
+/* The active invites of a game, for its editor (R52). */
+.invite-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.invite-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px 8px;
+  overflow-wrap: anywhere;
+}
+
 .member-name {
   font-weight: 600;
   overflow-wrap: anywhere;

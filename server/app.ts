@@ -43,6 +43,8 @@ const CLIENT_DIR = path.join(import.meta.dirname, "..", "client");
 /** Plan 6.2: bodies up to 2 MiB, for sign-in and registration up to 4 KiB. */
 const BODY_LIMIT = 2 * MIB;
 const AUTH_BODY_LIMIT = 4 * KIB;
+/** A DELETE carries nothing useful in its body (the client sends `{}`), so a large one is refused at once. */
+const EMPTY_BODY_LIMIT = 4 * KIB;
 
 export interface ServerOptions {
   /** Folder with settings.json and battlemap.db; created when missing. */
@@ -294,6 +296,26 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games, st
         },
       },
     ],
+    [
+      "GET /api/admin/invites",
+      {
+        access: "admin",
+        handle() {
+          return { status: 200, body: { invites: accounts.listInvites() } };
+        },
+      },
+    ],
+    [
+      "DELETE /api/admin/invites/:id",
+      {
+        access: "admin",
+        limit: EMPTY_BODY_LIMIT,
+        handle(call) {
+          accounts.revokeInvite(idParam(call, "id"));
+          return { status: 204 };
+        },
+      },
+    ],
     // ---- games (plan 5.11, 6.4); games.ts checks the rights in the game ----
     [
       "GET /api/games",
@@ -327,7 +349,7 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games, st
       "DELETE /api/games/:id",
       {
         access: "user",
-        limit: BODY_LIMIT,
+        limit: EMPTY_BODY_LIMIT,
         handle(call) {
           games.deleteGame(user(call), gameId(call));
           return { status: 204 };
@@ -350,6 +372,26 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games, st
             fragment: `join=${invite.code}`,
           });
           return { status: 201, body: { ...invite, links } };
+        },
+      },
+    ],
+    [
+      "GET /api/games/:id/invites",
+      {
+        access: "user",
+        handle(call) {
+          return { status: 200, body: { invites: games.listInvites(user(call), gameId(call)) } };
+        },
+      },
+    ],
+    [
+      "DELETE /api/games/:id/invites/:inviteId",
+      {
+        access: "user",
+        limit: EMPTY_BODY_LIMIT,
+        handle(call) {
+          games.revokeInvite(user(call), gameId(call), idParam(call, "inviteId"));
+          return { status: 204 };
         },
       },
     ],
@@ -378,7 +420,7 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games, st
       "DELETE /api/games/:id/master",
       {
         access: "user",
-        limit: BODY_LIMIT,
+        limit: EMPTY_BODY_LIMIT,
         handle(call) {
           games.takeMastery(user(call), gameId(call));
           return { status: 200, body: games.getGame(user(call), gameId(call)) };
@@ -400,7 +442,7 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games, st
       "DELETE /api/games/:id/members/:user",
       {
         access: "user",
-        limit: BODY_LIMIT,
+        limit: EMPTY_BODY_LIMIT,
         handle(call) {
           games.removeMember(user(call), gameId(call), idParam(call, "user"));
           return { status: 204 };

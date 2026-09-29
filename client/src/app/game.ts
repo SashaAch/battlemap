@@ -1,6 +1,6 @@
 // A game on the board (plan 5.3, 5.4, 5.11, 8.5, 8.6): the board shows a scene from the server, kept up to date by
-// the event stream; the top bar shows the game, its scene and who is online, a drawer the scenes and the members, and
-// a window the invite (R45).
+// the event stream; the top bar shows the game, its scene and who is online, a drawer the scenes, the members and
+// (to the editor) the active invites (R52), and a window the invite (R45).
 // Every finished change of the board goes to the server, which puts all changes in order and sends each one back
 // to everyone; the board shows its own changes at once and puts the others' under them (live.ts).
 // The editor (the master, or the owner of a personal campaign without one) draws with the usual tools; a player
@@ -15,6 +15,8 @@ import type { Key } from "../i18n/index.ts";
 import { icon } from "../ui/icons.ts";
 import { request } from "./api.ts";
 import type { GameInfo, GameInvite, MemberInfo, SceneData, SceneSummary } from "./api.ts";
+import { gameInvitesSection } from "./gameInvites.ts";
+import type { GameInvitesSection } from "./gameInvites.ts";
 import { inviteView } from "./invite.ts";
 import type { InviteView } from "./invite.ts";
 import { LiveScene } from "./live.ts";
@@ -172,6 +174,8 @@ export function startGame(hooks: GameHooks): GameView {
   let roundTrips = new RoundTrips();
   /** The last invite made in the open game: it stays on the panel while friends scan it, though the panel is drawn again as they join. */
   let shownInvite: InviteView | null = null;
+  /** The list of the game's active invites in the drawer, for the editor only (R52). */
+  let invites: GameInvitesSection | null = null;
 
   const whenIdle = (): Promise<void> =>
     new Promise((resolve) => {
@@ -511,10 +515,17 @@ export function startGame(hooks: GameHooks): GameView {
     title.textContent = game?.title ?? "";
     header.append(title, iconButton("close", "common.close", closeDrawer));
     panel.replaceChildren(header);
+    invites = null;
     onlineMarks.clear();
     if (!game) return;
     panel.append(labelled("p", game.kind === "gm" ? "games.kind.gm" : "games.kind.personal", "muted"));
     panel.append(game.editor ? scenesSection(game) : playerSection(game), membersSection(game));
+    // The editor sees the active invites of the game and revokes them (R52); read again with every drawing of the
+    // panel, as members joining by an invite use it up.
+    if (game.editor) {
+      invites = gameInvitesSection(game.id, (action, next) => act(game.id, action, next));
+      panel.append(invites.element);
+    }
     if (!game.editor) {
       shownInvite = null;
       invite.close();
@@ -762,6 +773,7 @@ export function startGame(hooks: GameHooks): GameView {
       act(game.id, reply, (created) => {
         shownInvite = inviteView(created);
         showInvite();
+        invites?.reload();
       });
     });
     showInvite();
@@ -798,6 +810,7 @@ export function startGame(hooks: GameHooks): GameView {
     online = new Set();
     roundTrips = new RoundTrips();
     shownInvite = null;
+    invites = null;
     hooks.measured(null);
     connection.hidden = true;
     loadCount++;
