@@ -81,6 +81,8 @@ export const MIGRATIONS: readonly string[] = [
   // AUTOINCREMENT, so the id of a revoked or used-up code never comes back as the id of a new one. Codes that R50
   // would have deleted already go now: all codes of a disabled user, and the registration codes of someone who is
   // no longer an administrator (only administrators make them), so enabling them or giving the role back revives nothing.
+  // Game invites of someone who is not an administrator stay: the database does not tell a former administrator from
+  // a master who never was one, and the invites of such a master are not R50's to delete.
   `
   DELETE FROM invites WHERE created_by IN (SELECT id FROM users WHERE disabled = 1)
     OR (kind = 'register' AND created_by IN (SELECT id FROM users WHERE role <> 'admin'));
@@ -495,10 +497,9 @@ export class Database {
     this.#run("DELETE FROM invites WHERE kind = 'game' AND game_id = ?", gameId);
   }
 
-  /** Deletes the codes the user made: all of them, or only those of `kind` when given (R50). */
-  deleteUserInvites(userId: number, kind?: InviteKind): void {
-    if (kind) this.#run("DELETE FROM invites WHERE created_by = ? AND kind = ?", userId, kind);
-    else this.#run("DELETE FROM invites WHERE created_by = ?", userId);
+  /** Deletes every code the user made, registration codes and game invites (R50). */
+  deleteUserInvites(userId: number): void {
+    this.#run("DELETE FROM invites WHERE created_by = ?", userId);
   }
 
   /** Deletes one code by its id; false when there is none. */

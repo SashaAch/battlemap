@@ -486,14 +486,14 @@ export class Accounts {
 
   /**
    * Makes another user an administrator or takes the role away (R38); the role is read on every request. Taking it
-   * away deletes the registration codes the user made, in the same transaction (R50); their game invites stay, since
-   * they stay the master, and no longer register newcomers (R43, R49). Giving the role back gives no code back.
+   * away deletes every code the user made, registration codes and game invites, in the same transaction (R50); they
+   * stay the master of their games and make new invites there. Giving the role back gives no code back.
    */
   setRole(admin: User, id: number, role: Role): User {
     this.#other(admin, id);
     this.#db.transaction(() => {
       this.#db.setRole(id, role);
-      if (role === "user") this.#db.deleteUserInvites(id, "register");
+      if (role === "user") this.#db.deleteUserInvites(id);
     });
     return this.#existing(id);
   }

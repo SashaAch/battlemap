@@ -219,7 +219,7 @@ export const en: Record<keyof typeof ru, string> = {
   "admin.makeAdmin": "Make administrator",
   "admin.makeUser": "Remove administrator rights",
   "admin.confirmMakeAdmin": "Make {login} a server administrator? They will get access to this page.",
-  "admin.confirmMakeUser": "Remove administrator rights from {login}? Their registration codes will be deleted for good.",
+  "admin.confirmMakeUser": "Remove administrator rights from {login}? Their registration codes and game invites will be deleted for good.",
   "admin.inviteLink": "Link with this code:",
   "admin.invites": "Active codes",
   "admin.invites.kind": "Kind",

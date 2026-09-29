@@ -217,7 +217,7 @@ export const ru = {
   "admin.makeAdmin": "Сделать администратором",
   "admin.makeUser": "Снять права администратора",
   "admin.confirmMakeAdmin": "Сделать {login} администратором сервера? Он получит доступ к этой странице.",
-  "admin.confirmMakeUser": "Снять с {login} права администратора? Его коды регистрации удалятся насовсем.",
+  "admin.confirmMakeUser": "Снять с {login} права администратора? Его коды регистрации и приглашения в игры удалятся насовсем.",
   "admin.inviteLink": "Ссылка с этим кодом:",
   "admin.invites": "Действующие коды",
   "admin.invites.kind": "Вид",

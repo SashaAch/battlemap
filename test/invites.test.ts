@@ -187,7 +187,7 @@ describe("an administrator's game invite registers (R43)", () => {
     assert.deepEqual(await memberIds(site, gameId, users.admin), [users.admin.id]);
   });
 
-  test("an administrator who lost the role before the registration no longer registers anyone; the role back, it does again", async () => {
+  test("an administrator who lost the role before the registration no longer registers anyone; the role back revives nothing (R50)", async () => {
     const { site, users } = await siteWith("boss");
     const setRole = async (role: string): Promise<void> => {
       const reply = await call(site, "POST", "/api/admin/users", users.admin.cookie, { action: "setRole", id: users.boss.id, role });
@@ -200,7 +200,8 @@ describe("an administrator's game invite registers (R43)", () => {
     assertError(await register(site, "newbie", code), "auth.inviteInvalid");
     assert.equal(await loginTaken(site, users.admin, "newbie"), false);
     await setRole("admin");
-    assert.equal((await register(site, "newbie", code)).status, 201);
+    assertError(await register(site, "newbie", code), "auth.inviteInvalid");
+    assert.equal(await loginTaken(site, users.admin, "newbie"), false);
   });
 
   test("a disabled administrator's invite does not register", async () => {
@@ -360,25 +361,27 @@ describe("codes of a disabled or demoted user are deleted (R50)", () => {
     assert.equal((await call(site, "POST", `/api/join/${adminInvite}`, users.kim.cookie)).status, 200);
   });
 
-  test("taking the role away deletes the registration codes; the game invites stay and let users with an account in", async () => {
+  test("taking the role away deletes all codes of the user: after the role back none registers or lets anyone join", async () => {
     const { site, users } = await siteWith("boss", "kim");
     const adminAction = (body: object) => call(site, "POST", "/api/admin/users", users.admin.cookie, body);
     assert.equal((await adminAction({ action: "setRole", id: users.boss.id, role: "admin" })).status, 200);
     const registration = await call(site, "POST", "/api/admin/invites", users.boss.cookie, { maxUses: 5, days: 5 });
     const { gameId } = await gameOf(site, users.boss);
     const code = await invite(site, gameId, users.boss);
+    const adminInvite = await invite(site, (await gameOf(site, users.admin)).gameId, users.admin);
 
     assert.equal((await adminAction({ action: "setRole", id: users.boss.id, role: "user" })).status, 200);
-    assert.deepEqual((await activeCodes(site, users.admin)).map((entry) => entry.kind), ["game"]);
-    assertError(await register(site, "newbie", registration.body.code), "auth.inviteInvalid");
-    // The game invite no longer registers (R43, R49), but the master's players still join by it.
-    assertError(await register(site, "newbie", code), "auth.inviteInvalid");
-    assert.equal((await call(site, "POST", `/api/join/${code}`, users.kim.cookie)).status, 200);
-    assert.deepEqual(await memberIds(site, gameId, users.boss), [users.boss.id, users.kim.id]);
-
+    // The codes of others stay.
+    assert.deepEqual((await activeCodes(site, users.admin)).map((entry) => entry.creatorName), ["ADMIN"]);
     assert.equal((await adminAction({ action: "setRole", id: users.boss.id, role: "admin" })).status, 200);
-    assertError(await register(site, "newbie", registration.body.code), "auth.inviteInvalid");
+
+    for (const gone of [registration.body.code, code]) {
+      assertError(await register(site, "newbie", gone), "auth.inviteInvalid");
+      assertError(await call(site, "POST", `/api/join/${gone}`, users.kim.cookie), "invite.notFound");
+    }
     assert.equal(await loginTaken(site, users.admin, "newbie"), false);
+    assert.deepEqual(await memberIds(site, gameId, users.boss), [users.boss.id]);
+    assert.equal((await call(site, "POST", `/api/join/${adminInvite}`, users.kim.cookie)).status, 200);
   });
 });
 
@@ -524,15 +527,14 @@ describe("a registration that fails midway (R43)", () => {
   }
 
   // R50: the administrator disables the creator, or takes the role away, through the same Accounts while the
-  // password is hashed; the code is deleted in between (a game invite on losing the role stays, unused).
+  // password is hashed; the code of either kind is deleted in between.
   const adminChanges: [string, (accounts: Accounts, admin: User, id: number) => void][] = [
     ["is disabled", (accounts, admin, id) => accounts.setDisabled(admin, id, true)],
     ["loses the role", (accounts, admin, id) => accounts.setRole(admin, id, "user")],
   ];
   for (const [what, change] of adminChanges) {
     for (const kind of ["register", "game"] as const) {
-      const deleted = what === "is disabled" || kind === "register";
-      test(`a ${kind === "register" ? "registration code" : "game invite"} whose creator ${what} by an administrator during the registration makes no account${deleted ? " and is gone" : ""}`, async () => {
+      test(`a ${kind === "register" ? "registration code" : "game invite"} whose creator ${what} by an administrator during the registration makes no account and is gone`, async () => {
         const { db, accounts, hooks, admin, game, now, register } = await directSite();
         const boss = db.insertUser({ login: "boss", displayName: "B", passHash: new Uint8Array(32), passSalt: new Uint8Array(16), passParams: "test", role: "admin", mustChangePassword: false, createdAt: now });
         const code = "abcdefghijkmnpqr";
@@ -540,7 +542,7 @@ describe("a registration that fails midway (R43)", () => {
         hooks.beforeStore = () => change(accounts, admin, boss.id);
         await assert.rejects(register("newbie", code), (error: ApiError) => error.code === "auth.inviteInvalid");
         assert.equal(db.findUserByLogin("newbie"), undefined);
-        assert.equal(db.findInvite(sha256(code))?.uses, deleted ? undefined : 0);
+        assert.equal(db.findInvite(sha256(code)), undefined);
         assert.deepEqual(db.listMembers(game.id).map((member) => member.userId), [admin.id]);
       });
     }

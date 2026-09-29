@@ -283,7 +283,7 @@ describe("queries", () => {
     }
   });
 
-  test("the active codes are those not expired with uses left; codes go by creator and kind, or one by id", () => {
+  test("the active codes are those not expired with uses left; codes go by creator, or one by id", () => {
     const db = new Database(file);
     try {
       const person = (login: string, displayName: string) =>
@@ -306,11 +306,9 @@ describe("queries", () => {
         { id: 1, kind: "register", creatorName: "Анна", gameTitle: null, usesLeft: 2, expiresAt: 100 },
       ]);
 
-      db.deleteUserInvites(admin.id, "register");
-      assert.deepEqual(db.listActiveInvites(0).map(({ id }) => id), [5, 2]);
-      assert.equal(db.findInvite(hash(3)), undefined, "the other registration code of the user goes too");
       db.deleteUserInvites(admin.id);
       assert.deepEqual(db.listActiveInvites(0).map(({ id }) => id), [5]);
+      for (const n of [1, 2, 3, 4]) assert.equal(db.findInvite(hash(n)), undefined, `code ${n} of the user, also expired or used up`);
       assert.equal(db.deleteInvite(5), true);
       assert.equal(db.deleteInvite(5), false);
       assert.deepEqual(db.listActiveInvites(0), []);
