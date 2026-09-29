@@ -189,9 +189,11 @@ export class Games {
   }
 
   /**
-   * Joins the game of an invite as a player; a member joining again stays as they are and uses nothing up.
-   * An unknown code is 404, and so is a used-up one, as a registration code answers the same for both (R38);
-   * an expired one is 410. Every failure counts against the address; over the limit even a good code gets 429.
+   * Joins the game of an invite as a player. A member of that game who opens the link again (on another device,
+   * say) gets 200 with any code of the game that is still stored, even a used-up or expired one: nothing is used
+   * up, it is no failure, and it gives nothing away, since the member knows the game. For anyone else an unknown
+   * code is 404, and so is a used-up one, as a registration code answers the same for both (R38); an expired one
+   * is 410. Every failure counts against the address; over the limit even a good code gets 429.
    */
   join(user: User, code: string, address: string): { gameId: number } {
     const now = this.#now();
@@ -199,9 +201,14 @@ export class Games {
     if (!this.#joinFailures.take(key, now)) throw new ApiError("invite.tooManyAttempts");
     const codeHash = sha256(code);
     const invite = this.#db.findGameInvite(codeHash);
+    if (invite && this.#db.findMemberRole(invite.gameId, user.id)) {
+      this.#joinFailures.giveBack(key, now);
+      return { gameId: invite.gameId };
+    }
     if (!invite || invite.uses >= invite.maxUses) throw new ApiError("invite.notFound");
     if (invite.expiresAt <= now) throw new ApiError("invite.expired");
     this.#db.transaction(() => {
+      // Joined in between by a parallel request of the same user.
       if (this.#db.findMemberRole(invite.gameId, user.id)) return;
       // Parallel joins may have used the last one up in between.
       if (!this.#db.useInvite(codeHash, "game", now)) throw new ApiError("invite.notFound");

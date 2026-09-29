@@ -2,9 +2,11 @@
 // on a free port of 127.0.0.1 with the data in a temporary folder. Every right has a test of the refusal.
 
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, test } from "node:test";
 
 import { forwardPatch } from "../client/src/app/api.ts";
@@ -366,6 +368,31 @@ describe("invites", () => {
     await restart(site);
     assertError(await join(site, code, users.eve), "invite.notFound", "the same after a restart");
     assert.equal((await call(site, "GET", `/api/games/${gameId}`, users.gm.cookie)).body.members.length, 3);
+  });
+
+  test("a member opening the link again gets 200 with a used-up or expired code; nothing is used up or counted", async () => {
+    const { site, users } = await siteWith("admin", "gm", "pat", "eve");
+    const gameId = await createGame(site, users.gm);
+    const code = await invite(site, gameId, users.gm, 2, 1);
+    assert.deepEqual((await join(site, code, users.pat)).body, { gameId });
+    // More times than failures are allowed: none of them counts as one.
+    for (let i = 0; i <= MAX_JOIN_FAILURES_PER_ADDRESS; i++) assert.deepEqual((await join(site, code, users.pat)).body, { gameId }, "used up");
+    assertError(await join(site, code, users.eve), "invite.notFound", "a used-up code for someone else");
+
+    const db = new DatabaseSync(path.join(site.dir, "battlemap.db"), { readOnly: true });
+    try {
+      const row = db.prepare("SELECT uses FROM invites WHERE code_hash = ?").get(createHash("sha256").update(code).digest());
+      assert.equal(row?.uses, 1);
+    } finally {
+      db.close();
+    }
+
+    const later = await invite(site, gameId, users.gm, 2, 5);
+    site.clock.now += 2 * DAY_MS;
+    assert.deepEqual((await join(site, later, users.pat)).body, { gameId }, "expired");
+    assert.deepEqual((await join(site, later, users.gm)).body, { gameId }, "the master too");
+    assertError(await join(site, later, users.eve), "invite.expired", "an expired code for someone else");
+    assert.equal((await call(site, "GET", `/api/games/${gameId}`, users.gm.cookie)).body.members.length, 2);
   });
 
   test("parallel joins never pass the number of joins", async () => {
