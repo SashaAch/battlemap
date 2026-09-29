@@ -658,6 +658,11 @@ const gameBoard: GameBoard = {
 const games = startGame({
   board: gameBoard,
   showNotice,
+  clearNotice(key) {
+    if (noticeKey !== key) return;
+    noticeKey = null;
+    updateNotice();
+  },
   failed: (error) => account.failed(error),
   showGames: () => account.showGames(),
   measured: (summary) => {
@@ -678,5 +683,7 @@ const account = startAccount({
     showGames(screen, { ...actions, openGame }, joinCode);
   },
   signedIn: games.reopen,
+  gameLink: games.reopen,
+  openGame: games.open,
   signedOut: games.close,
 });

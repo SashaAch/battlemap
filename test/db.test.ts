@@ -84,7 +84,7 @@ describe("migrations", () => {
     const db = new Database(file);
     try {
       assert.equal(db.findUserByLogin("boris")?.displayName, "BORIS");
-      assert.equal(db.hasInvite(new Uint8Array(32), "register", 50), true);
+      assert.equal(db.findInvite(new Uint8Array(32))?.maxUses, 3);
       assert.deepEqual(db.listUserGames(1), []);
     } finally {
       db.close();
@@ -167,12 +167,12 @@ describe("queries", () => {
       const [fresh, stale] = [1, 2].map((n) => new Uint8Array(32).fill(n));
       db.insertInvite(fresh, "register", null, admin.id, 100, 2);
       db.insertInvite(stale, "register", null, admin.id, 10, 5);
-      assert.equal(db.hasInvite(fresh, "register", 50), true);
-      assert.equal(db.hasInvite(fresh, "game", 50), false);
+      assert.deepEqual(db.findInvite(fresh), { kind: "register", gameId: null, createdBy: admin.id, creatorIsAdmin: true, expiresAt: 100, uses: 0, maxUses: 2 });
+      assert.equal(db.useInvite(fresh, "game", 50), false, "a code is used only as its own kind");
       assert.equal(db.useInvite(stale, "register", 50), false);
       assert.equal(db.useInvite(fresh, "register", 50), true);
       assert.equal(db.useInvite(fresh, "register", 50), true);
-      assert.equal(db.hasInvite(fresh, "register", 50), false);
+      assert.equal(db.findInvite(fresh)?.uses, 2);
       assert.equal(db.useInvite(fresh, "register", 50), false);
       db.deleteExpired(50);
       assert.equal(db.useInvite(stale, "register", 5), false, "expired invites are removed");
@@ -205,11 +205,11 @@ describe("queries", () => {
     db = new Database(file);
     try {
       db.deleteExpired(50);
-      assert.deepEqual(db.findGameInvite(expired), { gameId: game.id, expiresAt: 10, uses: 0, maxUses: 5 });
-      assert.equal(db.findGameInvite(usedUp), undefined);
-      assert.equal(db.hasInvite(register, "register", 5), false, "an expired registration code goes as before");
+      assert.deepEqual(db.findInvite(expired), { kind: "game", gameId: game.id, createdBy: admin.id, creatorIsAdmin: true, expiresAt: 10, uses: 0, maxUses: 5 });
+      assert.equal(db.findInvite(usedUp), undefined);
+      assert.equal(db.findInvite(register), undefined, "an expired registration code goes as before");
       db.deleteGameInvites(game.id);
-      assert.equal(db.findGameInvite(expired), undefined);
+      assert.equal(db.findInvite(expired), undefined);
     } finally {
       db.close();
     }

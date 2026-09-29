@@ -274,7 +274,8 @@ export class Games {
 
   /**
    * The owner of a personal campaign takes mastery back (R41): the campaign has no master again, the owner edits
-   * its scenes and the former master stays as a player. A game with a master has no such owner right: 403.
+   * its scenes and the former master stays as a player; the invites of the game go out (R49). A game with a master
+   * has no such owner right: 403.
    */
   takeMastery(user: User, gameId: number): void {
     const { game } = this.#access(user, gameId);
@@ -284,6 +285,8 @@ export class Games {
     this.#db.transaction(() => {
       this.#db.setMemberRole(game.id, formerMaster, "player");
       this.#db.setGameMaster(game.id, null);
+      // The master changes, so the invites of the former one go out (R49).
+      this.#db.deleteGameInvites(game.id);
     });
     this.#changed(game.id);
   }
@@ -316,23 +319,29 @@ export class Games {
     const key = addressKey(address);
     if (!this.#joinFailures.take(key, now)) throw new ApiError("invite.tooManyAttempts");
     const codeHash = sha256(code);
-    const invite = this.#db.findGameInvite(codeHash);
-    if (invite && this.#db.findMemberRole(invite.gameId, user.id)) {
+    const invite = this.#db.findInvite(codeHash);
+    const gameId = invite?.kind === "game" ? invite.gameId : null;
+    if (gameId !== null && this.#db.findMemberRole(gameId, user.id)) {
       this.#joinFailures.giveBack(key, now);
-      return { gameId: invite.gameId };
+      return { gameId };
     }
-    if (!invite || invite.uses >= invite.maxUses) throw new ApiError("invite.notFound");
+    if (!invite || gameId === null || invite.uses >= invite.maxUses) throw new ApiError("invite.notFound");
     if (invite.expiresAt <= now) throw new ApiError("invite.expired");
     const joined = this.#db.transaction(() => {
       // Joined in between by a parallel request of the same user.
-      if (this.#db.findMemberRole(invite.gameId, user.id)) return false;
+      if (this.#db.findMemberRole(gameId, user.id)) return false;
       // Parallel joins may have used the last one up in between.
       if (!this.#db.useInvite(codeHash, "game", now)) throw new ApiError("invite.notFound");
-      return this.#db.insertMember(invite.gameId, user.id, "player", now);
+      return this.#db.insertMember(gameId, user.id, "player", now);
     });
     this.#joinFailures.giveBack(key, now);
-    if (joined) this.#changed(invite.gameId);
-    return { gameId: invite.gameId };
+    if (joined) this.#changed(gameId);
+    return { gameId };
+  }
+
+  /** Someone joined the game on registering with an administrator's invite (R43): the others see the new member. */
+  memberRegistered(gameId: number): void {
+    this.#changed(gameId);
   }
 
   /**
@@ -351,7 +360,10 @@ export class Games {
     this.#changed(game.id);
   }
 
-  /** The master hands the game to another member; in a personal campaign without a master the owner names one (5.11). */
+  /**
+   * The master hands the game to another member; in a personal campaign without a master the owner names one (5.11).
+   * Every invite of the game goes out: the new master makes their own (R49).
+   */
   setMaster(user: User, gameId: number, memberId: number): void {
     const { game } = this.#editor(user, gameId);
     if (!this.#db.findMemberRole(game.id, memberId)) throw new ApiError("member.notFound");
@@ -360,6 +372,7 @@ export class Games {
       if (game.gmId !== null) this.#db.setMemberRole(game.id, game.gmId, "player");
       this.#db.setMemberRole(game.id, memberId, "gm");
       this.#db.setGameMaster(game.id, memberId);
+      this.#db.deleteGameInvites(game.id);
     });
     this.#changed(game.id);
   }

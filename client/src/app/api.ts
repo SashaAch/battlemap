@@ -24,6 +24,11 @@ export interface Me extends UserInfo {
   settings: AccountSettings;
 }
 
+/** The answer to a registration: the new user, and the game an administrator's invite made them a player of (R43). */
+export interface Registered extends Me {
+  gameId: number | null;
+}
+
 // ---- games (server/games.ts) ----
 
 export type GameKind = "gm" | "personal";
@@ -72,6 +77,20 @@ export interface GameInfo {
   activeSceneId: number | null;
   members: MemberInfo[];
   scenes: SceneSummary[];
+}
+
+/** A link of a game invite on one address of the server's computer, with its network adapter when known (plan 8.26). */
+export interface InviteLink {
+  url: string;
+  adapter: string | null;
+}
+
+/** A new game invite; the first link is the one to show at the start. */
+export interface GameInvite {
+  code: string;
+  expiresAt: number;
+  maxUses: number;
+  links: InviteLink[];
 }
 
 export interface SceneData extends SceneSummary {

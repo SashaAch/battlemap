@@ -9,11 +9,11 @@
 import type { Point } from "../board/geometry.ts";
 import { newScene, parseScene, SceneError } from "../board/store.ts";
 import type { Patch, Scene } from "../board/store.ts";
-import { getLang, t } from "../i18n/index.ts";
+import { t } from "../i18n/index.ts";
 import type { Key } from "../i18n/index.ts";
-import { secretLine } from "./admin.ts";
 import { request } from "./api.ts";
-import type { GameInfo, MemberInfo, SceneData, SceneSummary } from "./api.ts";
+import type { GameInfo, GameInvite, MemberInfo, SceneData, SceneSummary } from "./api.ts";
+import { inviteView } from "./invite.ts";
 import { LiveScene } from "./live.ts";
 import type { Received } from "./live.ts";
 import { button, codeOf, errorKey, field, labelled } from "./login.ts";
@@ -49,6 +49,8 @@ export interface GameBoard {
 export interface GameHooks {
   board: GameBoard;
   showNotice(key: Key, params?: Record<string, string | number>): void;
+  /** Hides the notice if it is the one of `key`. */
+  clearNotice(key: Key): void;
   /** An ended session: back to sign-in. */
   failed(error: unknown): void;
   /** Opens the "my games" screen. */
@@ -61,8 +63,8 @@ export interface GameView {
   open(gameId: number): void;
   /** Back to the draft; nothing when no game is open. */
   close(): void;
-  /** After a reload: opens the game named in the address (#game=ID), if any. */
-  reopen(): void;
+  /** After a reload or a link in the open tab: opens the game named in the address (#game=ID) unless it is open; true when it did. */
+  reopen(): boolean;
 }
 
 /** Events of the stream (server/games.ts). */
@@ -131,6 +133,8 @@ export function startGame(hooks: GameHooks): GameView {
   /** `?measure` in the address: a player answers each change from someone else with a ping, the master counts the time. */
   const measure = measuring(location.search);
   let roundTrips = new RoundTrips();
+  /** The last invite made in the open game: it stays on the panel while friends scan it, though the panel is drawn again as they join. */
+  let shownInvite: HTMLElement | null = null;
 
   const whenIdle = (): Promise<void> =>
     new Promise((resolve) => {
@@ -381,6 +385,7 @@ export function startGame(hooks: GameHooks): GameView {
         if (!current()) return;
         if (before !== changeCount || hooks.board.busy()) continue;
         info = game;
+        opened();
         showScene(gameId, data, game.editor);
         return;
       }
@@ -390,10 +395,17 @@ export function startGame(hooks: GameHooks): GameView {
     }
   }
 
+  /** The game was read: a notice that it is gone, left from an earlier attempt, no longer holds. */
+  function opened(): void {
+    hooks.clearNotice("notice.gameGone");
+  }
+
   /** Reads the game again for the panel only; the board and its undo history stay. */
   function refreshInfo(gameId: number): void {
     request<GameInfo>("GET", `api/games/${gameId}`).then((game) => {
-      if (openId !== gameId || JSON.stringify(game) === JSON.stringify(info)) return;
+      if (openId !== gameId) return;
+      opened();
+      if (JSON.stringify(game) === JSON.stringify(info)) return;
       info = game;
       render();
     }, (error: unknown) => failed(error, gameId));
@@ -427,6 +439,7 @@ export function startGame(hooks: GameHooks): GameView {
     panel.append(title, labelled("p", game.kind === "gm" ? "games.kind.gm" : "games.kind.personal", "muted"));
     panel.append(game.editor ? scenesSection(game) : playerSection(game), membersSection(game));
     if (game.editor) panel.append(inviteSection(game));
+    else shownInvite = null;
     const actions = document.createElement("div");
     actions.className = "actions";
     // The owner of a personal campaign takes mastery back from the master they named (R41).
@@ -591,7 +604,10 @@ export function startGame(hooks: GameHooks): GameView {
     return element;
   }
 
-  /** An invite code for some joins within some days, like a registration code; shown only once, the server keeps its hash. */
+  /**
+   * An invite code for some joins within some days, like a registration code; shown only once, the server keeps its
+   * hash. With it the QR code and the links on the addresses of the computer (invite.ts).
+   */
   function inviteSection(game: GameInfo): HTMLElement {
     const element = section("game.invite");
     const form = document.createElement("form");
@@ -603,16 +619,16 @@ export function startGame(hooks: GameHooks): GameView {
     form.append(uses.wrap, days.wrap, submit);
     const result = document.createElement("div");
     result.setAttribute("aria-live", "polite");
+    if (shownInvite) result.append(shownInvite);
     form.addEventListener("submit", (event) => {
       event.preventDefault();
-      const reply = request<{ code: string; expiresAt: number; maxUses: number }>("POST", `api/games/${game.id}/invites`, {
+      const reply = request<GameInvite>("POST", `api/games/${game.id}/invites`, {
         maxUses: Number(uses.input.value),
         days: Number(days.input.value),
       });
-      act(game.id, reply, ({ code, expiresAt, maxUses }) => {
-        const link = `${location.origin}${location.pathname}#join=${code}`;
-        const until = new Date(expiresAt).toLocaleString(getLang());
-        result.replaceChildren(secretLine("game.inviteCode", { uses: String(maxUses), until }, code), secretLine("game.inviteLink", {}, link));
+      act(game.id, reply, (invite) => {
+        shownInvite = inviteView(invite);
+        result.replaceChildren(shownInvite);
       });
     });
     element.append(form, result);
@@ -647,6 +663,7 @@ export function startGame(hooks: GameHooks): GameView {
     queue.length = 0;
     online = new Set();
     roundTrips = new RoundTrips();
+    shownInvite = null;
     hooks.measured(null);
     connection.hidden = true;
     loadCount++;
@@ -663,7 +680,9 @@ export function startGame(hooks: GameHooks): GameView {
     close,
     reopen() {
       const match = GAME_HASH.exec(location.hash);
-      if (match && openId === null) open(Number(match[1]));
+      if (!match || Number(match[1]) === openId) return false;
+      open(Number(match[1]));
+      return true;
     },
   };
 }

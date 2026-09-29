@@ -615,7 +615,9 @@ describe("Host names (DNS rebinding)", () => {
   test("a request with a foreign Host is refused, even with a matching Origin", async () => {
     const { site } = await siteWithAdmin();
     const port = site.server.port;
-    for (const host of [`evil.example:${port}`, `evil.example`, `127.0.0.1.evil.example:${port}`, `localhost.evil.example:${port}`]) {
+    // After the brackets of IPv6 only a port may follow.
+    const hosts = [`evil.example:${port}`, `evil.example`, `127.0.0.1.evil.example:${port}`, `localhost.evil.example:${port}`, "[::1]x", `[::1]evil.example:${port}`];
+    for (const host of hosts) {
       const page = await rawRequest(site, "GET", "/", { Host: host });
       assert.deepEqual({ status: page.status, text: page.text }, { status: 403, text: '{"error":"request.host"}' }, host);
       const body = JSON.stringify({ login: "admin", password: ADMIN.password });

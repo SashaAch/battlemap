@@ -34,7 +34,7 @@ import {
   serveClientFile,
   stringField,
 } from "./http.ts";
-import { hostName, HostCheck, siteLinks } from "./network.ts";
+import { hostName, HostCheck, inviteLinks, siteLinks } from "./network.ts";
 import { SettingsFile } from "./settings.ts";
 import { Streams } from "./stream.ts";
 
@@ -76,6 +76,9 @@ interface Call {
   /** The session cookie as sent, valid or not. */
   sessionToken: string | undefined;
   address: string;
+  /** The Host header as sent (HostCheck has let it in) and whether the request came over HTTPS. */
+  host: string | undefined;
+  secure: boolean;
 }
 
 interface Reply {
@@ -141,7 +144,13 @@ function matchRoute(routes: Map<string, Route>, method: string, urlPath: string)
 
 const idParam = (call: Call, name: string): number => Number(call.params[name]);
 
-function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games, streams: Streams): Map<string, Route> {
+/** Where the server listens; the port is set once it listens, before any request comes. */
+interface Listening {
+  host: string | undefined;
+  port: number;
+}
+
+function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games, streams: Streams, listening: Listening): Map<string, Route> {
   const openRegistration = (): boolean => settings.current.openRegistration;
   const user = (call: Call): User => signedIn(call).user;
   const gameId = (call: Call): number => idParam(call, "id");
@@ -154,7 +163,7 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games, st
         access: "anyone",
         limit: AUTH_BODY_LIMIT,
         async handle({ body, address }) {
-          const { user, token } = await accounts.register(
+          const { user, token, gameId } = await accounts.register(
             {
               login: stringField(body, "login"),
               displayName: stringField(body, "displayName"),
@@ -165,7 +174,9 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games, st
             openRegistration(),
             address,
           );
-          return { status: 201, body: meView(user), session: token };
+          // An administrator's game invite made the user a player (R43): the others see them at once.
+          if (gameId !== null) games.memberRegistered(gameId);
+          return { status: 201, body: { ...meView(user), gameId }, session: token };
         },
       },
     ],
@@ -329,7 +340,16 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games, st
         access: "user",
         limit: BODY_LIMIT,
         handle(call) {
-          return { status: 201, body: games.createInvite(user(call), gameId(call), idField(call.body, "maxUses"), idField(call.body, "days")) };
+          const invite = games.createInvite(user(call), gameId(call), idField(call.body, "maxUses"), idField(call.body, "days"));
+          // Links a phone in the same network opens (R43, plan 8.26); the first is the one shown at the start.
+          const links = inviteLinks({
+            listenHost: listening.host,
+            port: listening.port,
+            pageHost: call.host,
+            secure: call.secure,
+            fragment: `join=${invite.code}`,
+          });
+          return { status: 201, body: { ...invite, links } };
         },
       },
     ],
@@ -502,11 +522,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const streams = new Streams((tokenHash) => accounts.sessionAlive(tokenHash), options.heartbeatMs);
   const games = new Games(db, now, streams, (error) => log(`error: a scene was not saved: ${error instanceof Error ? (error.stack ?? error.message) : String(error)}`));
   let setupToken: string | null;
+  const listening: Listening = { host: options.host, port: 0 };
 
   try {
     db.deleteExpired(now());
     setupToken = accounts.startSetup();
-    const routes = makeRoutes(accounts, settings, games, streams);
+    const routes = makeRoutes(accounts, settings, games, streams, listening);
     const hosts = new HostCheck(settings.current.allowedHosts);
 
     /**
@@ -547,7 +568,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
 
       const body = changes ? await readJsonObject(req, route.limit ?? BODY_LIMIT) : {};
-      const reply = await route.handle({ body, params, auth, sessionToken, address: req.socket.remoteAddress ?? "" });
+      const reply = await route.handle({ body, params, auth, sessionToken, address: req.socket.remoteAddress ?? "", host: req.headers.host, secure });
 
       const headers: Record<string, string> = {};
       if (reply.session !== undefined) {
@@ -607,9 +628,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   }
 
   const port = (server.address() as AddressInfo).port;
-  const { host } = options;
-  const links =
-    host === undefined || host === "0.0.0.0" || host === "::" ? siteLinks(port) : [`http://${host.includes(":") ? `[${host}]` : host}:${port}/`];
+  listening.port = port;
+  const links = siteLinks(port, options.host);
   const setupLink = setupToken === null ? null : `${links[0]}#setup=${setupToken}`;
 
   if (created) log(`Создан файл настроек / Settings file created: ${path.join(options.dataDir, "settings.json")}`);
