@@ -7,7 +7,7 @@ import { isLang } from "../client/src/i18n/index.ts";
 import type { LANGS } from "../client/src/i18n/index.ts";
 import { isHexColor, isThemeChoice } from "../client/src/theme.ts";
 import type { THEME_CHOICES } from "../client/src/theme.ts";
-import type { Database, Role, Session, User } from "./db.ts";
+import type { ActiveInvite, Database, Role, Session, User } from "./db.ts";
 import { ApiError } from "./errors.ts";
 import type { ErrorCode } from "./errors.ts";
 import { addressKey, AttemptLimiter } from "./limits.ts";
@@ -468,20 +468,33 @@ export class Accounts {
     return { user: this.#existing(id), password };
   }
 
-  /** Disabling also ends all sessions of the user. */
+  /**
+   * Disabling also ends all sessions of the user and deletes every code they made, registration codes and game
+   * invites (R50), in the same transaction. Enabling gives none of them back.
+   */
   setDisabled(admin: User, id: number, disabled: boolean): User {
     this.#other(admin, id);
     this.#db.transaction(() => {
       this.#db.setDisabled(id, disabled);
-      if (disabled) this.#db.deleteUserSessions(id);
+      if (disabled) {
+        this.#db.deleteUserSessions(id);
+        this.#db.deleteUserInvites(id);
+      }
     });
     return this.#existing(id);
   }
 
-  /** Makes another user an administrator or takes the role away (R38); the role is read on every request. */
+  /**
+   * Makes another user an administrator or takes the role away (R38); the role is read on every request. Taking it
+   * away deletes the registration codes the user made, in the same transaction (R50); their game invites stay, since
+   * they stay the master, and no longer register newcomers (R43, R49). Giving the role back gives no code back.
+   */
   setRole(admin: User, id: number, role: Role): User {
     this.#other(admin, id);
-    this.#db.setRole(id, role);
+    this.#db.transaction(() => {
+      this.#db.setRole(id, role);
+      if (role === "user") this.#db.deleteUserInvites(id, "register");
+    });
     return this.#existing(id);
   }
 
@@ -493,6 +506,16 @@ export class Accounts {
     const expiresAt = this.#now() + days * DAY_MS;
     this.#db.insertInvite(sha256(code), "register", null, admin.id, expiresAt, maxUses);
     return { code, expiresAt, maxUses };
+  }
+
+  /** The registration codes and game invites of all games that still let someone in (R50), without the codes. */
+  listInvites(): ActiveInvite[] {
+    return this.#db.listActiveInvites(this.#now());
+  }
+
+  /** Deletes a code of either kind by its id (R50); `admin.inviteNotFound` when there is none. */
+  revokeInvite(id: number): void {
+    if (!this.#db.deleteInvite(id)) throw new ApiError("admin.inviteNotFound");
   }
 
   #existing(id: number): User {

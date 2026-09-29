@@ -24,6 +24,7 @@ export const ERRORS = {
   "password.wrong": 403,
   "password.same": 400,
   "admin.self": 400,
+  "admin.inviteNotFound": 404,
   "user.notFound": 404,
   "game.notFound": 404,
   "game.title": 400,

@@ -1,10 +1,10 @@
 // The administration screen (plan 8.4 item 5): users, temporary passwords, disabling, registration codes,
-// open registration. User text goes only through textContent.
+// open registration, the active codes with their revoking (R50). User text goes only through textContent.
 
 import { getLang, t } from "../i18n/index.ts";
 import type { Key } from "../i18n/index.ts";
 import { request } from "./api.ts";
-import type { Me, UserInfo } from "./api.ts";
+import type { AdminInvite, Me, UserInfo } from "./api.ts";
 import { button, codeOf, errorLine, field, labelled } from "./login.ts";
 
 export interface AdminActions {
@@ -88,16 +88,17 @@ export function showAdmin(screen: HTMLElement, me: Me, actions: AdminActions): v
                 ),
               );
             }),
+            // Disabling a user and taking the role away delete their codes (R50), so the codes are read again too.
             button(user.disabled ? "admin.enable" : "admin.disable", () => {
               if (!user.disabled && !confirm(t("admin.confirmDisable", { login: user.login }))) return;
               run(
-                request("POST", "api/admin/users", { action: "setDisabled", id: user.id, disabled: !user.disabled }).then(loadUsers),
+                request("POST", "api/admin/users", { action: "setDisabled", id: user.id, disabled: !user.disabled }).then(loadAll),
               );
             }),
             button(user.role === "admin" ? "admin.makeUser" : "admin.makeAdmin", () => {
               const next = user.role === "admin" ? "user" : "admin";
               if (!confirm(t(next === "admin" ? "admin.confirmMakeAdmin" : "admin.confirmMakeUser", { login: user.login }))) return;
-              run(request("POST", "api/admin/users", { action: "setRole", id: user.id, role: next }).then(loadUsers));
+              run(request("POST", "api/admin/users", { action: "setRole", id: user.id, role: next }).then(loadAll));
             }),
           );
         }
@@ -108,6 +109,58 @@ export function showAdmin(screen: HTMLElement, me: Me, actions: AdminActions): v
   };
 
   const loadUsers = (): Promise<void> => request<{ users: UserInfo[] }>("GET", "api/admin/users").then((reply) => showUsers(reply.users));
+
+  // ---- active codes (R50): registration codes and game invites of all games, without the codes themselves ----
+
+  const invitesTable = document.createElement("table");
+  invitesTable.className = "admin-table";
+  const invitesHead = document.createElement("tr");
+  for (const key of ["admin.invites.kind", "admin.invites.creator", "admin.invites.game", "admin.invites.usesLeft", "admin.invites.until", "admin.actions"] as const) {
+    invitesHead.append(labelled("th", key));
+  }
+  const invitesBody = document.createElement("tbody");
+  invitesTable.createTHead().append(invitesHead);
+  invitesTable.append(invitesBody);
+  const invitesWrap = document.createElement("div");
+  invitesWrap.className = "table-wrap";
+  invitesWrap.append(invitesTable);
+  const noInvites = labelled("p", "admin.invites.none", "muted");
+
+  const revoke = (invite: AdminInvite): void => {
+    const question =
+      invite.kind === "game"
+        ? t("admin.confirmRevokeGame", { game: invite.gameTitle ?? "", creator: invite.creatorName })
+        : t("admin.confirmRevokeRegister", { creator: invite.creatorName });
+    if (!confirm(question)) return;
+    // Read again also when the code was already gone: the list was out of date.
+    run(request<void>("DELETE", `api/admin/invites/${invite.id}`).finally(loadInvites));
+  };
+
+  const showInvites = (invites: AdminInvite[]): void => {
+    invitesWrap.hidden = invites.length === 0;
+    noInvites.hidden = invites.length > 0;
+    invitesBody.replaceChildren(
+      ...invites.map((invite) => {
+        const row = document.createElement("tr");
+        const kind = labelled("td", invite.kind === "game" ? "admin.invites.kind.game" : "admin.invites.kind.register");
+        const cells = [invite.creatorName, invite.gameTitle ?? "", String(invite.usesLeft), new Date(invite.expiresAt).toLocaleString(getLang())].map(
+          (text) => {
+            const cell = document.createElement("td");
+            cell.textContent = text;
+            return cell;
+          },
+        );
+        const buttons = document.createElement("td");
+        buttons.className = "row-actions";
+        buttons.append(button("admin.revoke", () => revoke(invite)));
+        row.append(kind, ...cells, buttons);
+        return row;
+      }),
+    );
+  };
+
+  const loadInvites = (): Promise<void> => request<{ invites: AdminInvite[] }>("GET", "api/admin/invites").then((reply) => showInvites(reply.invites));
+  const loadAll = (): Promise<void> => Promise.all([loadUsers(), loadInvites()]).then(() => undefined);
 
   // ---- new user ----
 
@@ -185,6 +238,7 @@ export function showAdmin(screen: HTMLElement, me: Me, actions: AdminActions): v
           secretLine("admin.inviteCode", { uses: String(reply.maxUses), until }, reply.code),
           secretLine("admin.inviteLink", {}, link),
         );
+        return loadInvites();
       }),
     );
   });
@@ -195,10 +249,12 @@ export function showAdmin(screen: HTMLElement, me: Me, actions: AdminActions): v
   const tableWrap = document.createElement("div");
   tableWrap.className = "table-wrap";
   tableWrap.append(table);
-  panel.append(header, errors.element, result, usersTitle, tableWrap, createTitle, create, registrationTitle, openWrap, invite);
+  const invitesTitle = labelled("h3", "admin.invites");
+  panel.append(header, errors.element, result, usersTitle, tableWrap, createTitle, create, registrationTitle, openWrap, invite, invitesTitle, noInvites, invitesWrap);
   screen.append(panel);
 
   run(loadUsers());
+  run(loadInvites());
   run(
     request<{ openRegistration: boolean }>("GET", "api/admin/settings").then((reply) => {
       openBox.checked = reply.openRegistration;

@@ -854,6 +854,8 @@ describe("rights on every request", () => {
     ["POST", "/api/admin/users", { action: "setDisabled", id: 1, disabled: true }],
     ["POST", "/api/admin/users", { action: "setRole", id: 1, role: "user" }],
     ["POST", "/api/admin/invites", { maxUses: 1, days: 1 }],
+    ["GET", "/api/admin/invites", undefined],
+    ["DELETE", "/api/admin/invites/1", undefined],
     ["GET", "/api/admin/settings", undefined],
     ["PUT", "/api/admin/settings", { openRegistration: true }],
   ];

@@ -294,6 +294,26 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games, st
         },
       },
     ],
+    [
+      "GET /api/admin/invites",
+      {
+        access: "admin",
+        handle() {
+          return { status: 200, body: { invites: accounts.listInvites() } };
+        },
+      },
+    ],
+    [
+      "DELETE /api/admin/invites/:id",
+      {
+        access: "admin",
+        limit: BODY_LIMIT,
+        handle(call) {
+          accounts.revokeInvite(idParam(call, "id"));
+          return { status: 204 };
+        },
+      },
+    ],
     // ---- games (plan 5.11, 6.4); games.ts checks the rights in the game ----
     [
       "GET /api/games",

@@ -77,6 +77,29 @@ export const MIGRATIONS: readonly string[] = [
   ) STRICT;
   CREATE INDEX scenes_by_game ON scenes (game_id);
   `,
+  // Stage 26b (R50): an invite gets an id, so an administrator revokes it from the list without its code.
+  // AUTOINCREMENT, so the id of a revoked or used-up code never comes back as the id of a new one. Codes that R50
+  // would have deleted already go now: all codes of a disabled user, and the registration codes of someone who is
+  // no longer an administrator (only administrators make them), so enabling them or giving the role back revives nothing.
+  `
+  DELETE FROM invites WHERE created_by IN (SELECT id FROM users WHERE disabled = 1)
+    OR (kind = 'register' AND created_by IN (SELECT id FROM users WHERE role <> 'admin'));
+
+  CREATE TABLE invites_new (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code_hash BLOB NOT NULL UNIQUE,
+    kind TEXT NOT NULL CHECK (kind IN ('register', 'game')),
+    game_id INTEGER,
+    created_by INTEGER NOT NULL REFERENCES users (id),
+    expires_at INTEGER NOT NULL,
+    max_uses INTEGER NOT NULL CHECK (max_uses >= 1),
+    uses INTEGER NOT NULL DEFAULT 0 CHECK (uses >= 0)
+  ) STRICT;
+  INSERT INTO invites_new (code_hash, kind, game_id, created_by, expires_at, max_uses, uses)
+    SELECT code_hash, kind, game_id, created_by, expires_at, max_uses, uses FROM invites ORDER BY rowid;
+  DROP TABLE invites;
+  ALTER TABLE invites_new RENAME TO invites;
+  `,
 ];
 
 /** Brings the schema up to `migrations.length`; refuses a database written by a newer server. */
@@ -194,6 +217,18 @@ export interface Invite {
   expiresAt: number;
   uses: number;
   maxUses: number;
+}
+
+/** A code that still lets someone in, as the administrator's list shows it (R50); never the code or its hash. */
+export interface ActiveInvite {
+  id: number;
+  kind: InviteKind;
+  /** The display name of the creator. */
+  creatorName: string;
+  /** The title of the game of a game invite, null for a registration code. */
+  gameTitle: string | null;
+  usesLeft: number;
+  expiresAt: number;
 }
 
 type Row = Record<string, SQLOutputValue>;
@@ -458,6 +493,34 @@ export class Database {
 
   deleteGameInvites(gameId: number): void {
     this.#run("DELETE FROM invites WHERE kind = 'game' AND game_id = ?", gameId);
+  }
+
+  /** Deletes the codes the user made: all of them, or only those of `kind` when given (R50). */
+  deleteUserInvites(userId: number, kind?: InviteKind): void {
+    if (kind) this.#run("DELETE FROM invites WHERE created_by = ? AND kind = ?", userId, kind);
+    else this.#run("DELETE FROM invites WHERE created_by = ?", userId);
+  }
+
+  /** Deletes one code by its id; false when there is none. */
+  deleteInvite(id: number): boolean {
+    return this.#run("DELETE FROM invites WHERE id = ?", id) === 1;
+  }
+
+  /** The codes of both kinds that are not expired and have uses left, newest first (R50). */
+  listActiveInvites(now: number): ActiveInvite[] {
+    return this.#all(
+      `SELECT invites.id, invites.kind, users.display_name, games.title, invites.max_uses - invites.uses AS uses_left, invites.expires_at
+       FROM invites JOIN users ON users.id = invites.created_by LEFT JOIN games ON games.id = invites.game_id
+       WHERE invites.expires_at > ? AND invites.uses < invites.max_uses ORDER BY invites.id DESC`,
+      now,
+    ).map((row) => ({
+      id: Number(row.id),
+      kind: row.kind === "game" ? "game" : "register",
+      creatorName: String(row.display_name),
+      gameTitle: row.title === null ? null : String(row.title),
+      usesLeft: Number(row.uses_left),
+      expiresAt: Number(row.expires_at),
+    }));
   }
 
   // ---- games and members ----
