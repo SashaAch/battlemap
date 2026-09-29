@@ -7,7 +7,7 @@ import { isLang } from "../client/src/i18n/index.ts";
 import type { LANGS } from "../client/src/i18n/index.ts";
 import { isThemeChoice } from "../client/src/theme.ts";
 import type { THEME_CHOICES } from "../client/src/theme.ts";
-import type { Database, Role, User } from "./db.ts";
+import type { Database, Role, Session, User } from "./db.ts";
 import { ApiError } from "./errors.ts";
 import type { ErrorCode } from "./errors.ts";
 import { addressKey, AttemptLimiter } from "./limits.ts";
@@ -314,18 +314,31 @@ export class Accounts {
   authenticate(token: string | undefined): Authenticated | null {
     if (token === undefined || !TOKEN_PATTERN.test(token)) return null;
     const tokenHash = sha256(token);
-    const session = this.#db.findSession(tokenHash);
-    if (!session) return null;
+    const found = this.#liveSession(tokenHash);
+    if (!found) return null;
+    const { session, user } = found;
     const now = this.#now();
-    const user = this.#db.findUserById(session.userId);
-    // A session made under an older password (changed or reset since) is not valid.
-    if (session.expiresAt <= now || !user || user.disabled || session.passVersion !== user.passVersion) {
-      this.#db.deleteSession(tokenHash);
-      return null;
-    }
     const extended = session.expiresAt < now + SESSION_LIFETIME_MS - SESSION_EXTEND_STEP_MS;
     if (extended) this.#db.setSessionExpiry(tokenHash, now + SESSION_LIFETIME_MS);
     return { user, token, tokenHash, extended };
+  }
+
+  /** Whether the session is still valid, without extending it (an open event stream asks this now and then). */
+  sessionAlive(tokenHash: Buffer): boolean {
+    return this.#liveSession(tokenHash) !== null;
+  }
+
+  /** The session and its user; an expired session, or one of a disabled user, is deleted and gives null. */
+  #liveSession(tokenHash: Buffer): { session: Session; user: User } | null {
+    const session = this.#db.findSession(tokenHash);
+    if (!session) return null;
+    const user = this.#db.findUserById(session.userId);
+    // A session made under an older password (changed or reset since) is not valid.
+    if (session.expiresAt <= this.#now() || !user || user.disabled || session.passVersion !== user.passVersion) {
+      this.#db.deleteSession(tokenHash);
+      return null;
+    }
+    return { session, user };
   }
 
   logout(auth: Authenticated): void {

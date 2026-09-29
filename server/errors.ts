@@ -36,6 +36,8 @@ export const ERRORS = {
   "invite.notFound": 404,
   "invite.expired": 410,
   "invite.tooManyAttempts": 429,
+  "stream.tooMany": 429,
+  "ping.tooMany": 429,
   "server.error": 500,
 } as const;
 

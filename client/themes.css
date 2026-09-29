@@ -20,6 +20,7 @@
   --board-cursor: #d6336c;
   --board-label-bg: rgba(255, 255, 255, 0.92);
   --board-label-fg: #1d1f22;
+  --board-ping: #f08c00;
 }
 
 :root[data-theme="dark"] {
@@ -41,6 +42,7 @@
   --board-cursor: #ff6b9a;
   --board-label-bg: rgba(20, 22, 26, 0.9);
   --board-label-fg: #f2f4f6;
+  --board-ping: #ffc034;
 }
 
 :root[data-theme="parchment"] {
@@ -62,6 +64,7 @@
   --board-cursor: #a4161a;
   --board-label-bg: rgba(250, 242, 222, 0.94);
   --board-label-fg: #3b2a17;
+  --board-ping: #1971c2;
 }
 
 :root[data-theme="dungeon"] {
@@ -83,6 +86,7 @@
   --board-cursor: #ffb347;
   --board-label-bg: rgba(26, 20, 16, 0.9);
   --board-label-fg: #f5e6cf;
+  --board-ping: #4dabf7;
 }
 
 :root[data-theme="contrast"] {
@@ -104,4 +108,5 @@
   --board-cursor: #00e5ff;
   --board-label-bg: #000000;
   --board-label-fg: #ffffff;
+  --board-ping: #ffd400;
 }

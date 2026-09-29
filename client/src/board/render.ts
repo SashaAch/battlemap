@@ -12,7 +12,8 @@ import type { Scene } from "./store.ts";
 
 /**
  * What the tools show over the board: the brush or eraser square, the nearest edge, the outline being drawn,
- * the pencil line being drawn, the ruler, the path of a dragged token with its cost, the selected square.
+ * the pencil line being drawn, the ruler, the path of a dragged token with its cost, the selected square;
+ * and a ping, `age` from 0 when it came to 1 when it goes, with its author's name.
  */
 export type BoardOverlay =
   | { kind: "square"; square: CellSquare }
@@ -21,7 +22,8 @@ export type BoardOverlay =
   | { kind: "mark"; color: MarkColor; points: readonly [number, number][] }
   | { kind: "ruler"; from: Point; to: Point; label: string }
   | { kind: "path"; places: readonly Point[]; span: number; label: string }
-  | { kind: "selected"; square: CellSquare };
+  | { kind: "selected"; square: CellSquare }
+  | { kind: "ping"; point: Point; label: string; age: number };
 
 /** Board interface colours taken from the current theme (themes.css). */
 export interface BoardColors {
@@ -30,6 +32,7 @@ export interface BoardColors {
   cursor: string;
   labelBack: string;
   labelText: string;
+  ping: string;
 }
 
 export interface Viewport {
@@ -53,6 +56,7 @@ export function readBoardColors(): BoardColors {
     cursor: read("--board-cursor"),
     labelBack: read("--board-label-bg"),
     labelText: read("--board-label-fg"),
+    ping: read("--board-ping"),
   };
 }
 
@@ -210,6 +214,8 @@ function drawLabel(
 }
 
 const LABEL_FONT_PX = 14;
+/** Radius of a ping ring in cells, with a floor in pixels. */
+const PING_RADIUS = 0.6;
 
 function drawOverlay(ctx: CanvasRenderingContext2D, camera: Camera, overlay: BoardOverlay, colors: BoardColors): void {
   ctx.save();
@@ -280,6 +286,23 @@ function drawOverlay(ctx: CanvasRenderingContext2D, camera: Camera, overlay: Boa
       const last = overlay.places[overlay.places.length - 1];
       const corner = worldToScreen(camera, { x: last.x + overlay.span, y: last.y });
       drawLabel(ctx, overlay.label, corner.x + 6, corner.y + 4, colors.labelBack, colors.labelText, "left");
+      break;
+    }
+    case "ping": {
+      // A ring that widens and fades, over a steady one, with the author's name (user text, drawn as canvas text).
+      const center = worldToScreen(camera, overlay.point);
+      const radius = Math.max(12, camera.scale * PING_RADIUS);
+      ctx.strokeStyle = colors.ping;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, radius, 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.globalAlpha = 1 - overlay.age;
+      ctx.beginPath();
+      ctx.arc(center.x, center.y, radius * (1 + overlay.age), 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      if (overlay.label !== "") drawLabel(ctx, overlay.label, center.x, center.y + radius + LABEL_FONT_PX, colors.labelBack, colors.labelText, "center");
       break;
     }
   }

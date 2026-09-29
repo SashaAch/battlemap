@@ -1,9 +1,12 @@
-// A game on the board (plan 5.3, 5.4, 5.11, 8.5): the board shows a scene from the server, and the game panel
-// shows the scenes, the members and the invites. The editor (the master, or the owner of a personal campaign
-// without one) draws with the usual tools and every finished change goes to the server; a player only looks.
-// Others see the changes after they read the scene again (live changes are stage 6).
-// User text (titles, scene names, member names) goes only through textContent.
+// A game on the board (plan 5.3, 5.4, 5.11, 8.5, 8.6): the board shows a scene from the server, kept up to date by
+// the event stream, and the game panel shows the scenes, the members (who is online) and the invites.
+// Every finished change of the board goes to the server, which puts all changes in order and sends each one back
+// to everyone; the board shows its own changes at once and puts the others' under them (live.ts).
+// The editor (the master, or the owner of a personal campaign without one) draws with the usual tools; a player
+// moves the tokens of the side "players", measures and pings. User text (titles, scene names, member names) goes
+// only through textContent.
 
+import type { Point } from "../board/geometry.ts";
 import { newScene, parseScene, SceneError } from "../board/store.ts";
 import type { Patch, Scene } from "../board/store.ts";
 import { getLang, t } from "../i18n/index.ts";
@@ -11,16 +14,36 @@ import type { Key } from "../i18n/index.ts";
 import { secretLine } from "./admin.ts";
 import { request } from "./api.ts";
 import type { GameInfo, MemberInfo, SceneData, SceneSummary } from "./api.ts";
+import { LiveScene } from "./live.ts";
+import type { Received } from "./live.ts";
 import { button, codeOf, errorKey, field, labelled } from "./login.ts";
+import { echoChange, measuring, RoundTrips } from "./measure.ts";
+import type { RoundTripSummary } from "./measure.ts";
+import { openStream } from "./stream.ts";
+import type { GameStream, StreamEventName } from "./stream.ts";
+
+/** What the user may do on a game scene. */
+export interface BoardAccess {
+  /** Gets every finished change with the patch that takes it back; null makes the board read-only. */
+  changed: ((patch: Patch, inverse: Patch) => void) | null;
+  /** A player: moves only tokens of the side "players", measures and pings (plan 5.4, R6). */
+  player: boolean;
+  /** Puts a ping at a point of the board. */
+  ping(point: Point): void;
+}
 
 /** What the game needs from the board (main.ts). */
 export interface GameBoard {
-  /** Shows a game scene instead of the draft; `changed` gets every finished change, null makes the board read-only. */
-  show(scene: Scene, changed: ((patch: Patch) => void) | null): void;
+  /** Shows a game scene instead of the draft. */
+  show(scene: Scene, access: BoardAccess): void;
   /** Back to the draft kept in the browser. */
   showDraft(): void;
-  /** A stroke or a drag is under way: the scene must not be replaced now. */
+  /** A stroke or a drag is under way: the scene must not be replaced or changed now. */
   busy(): boolean;
+  /** The scene on the board was changed by a change from the server: draw it again. */
+  refresh(): void;
+  /** Shows a ping of `name` for a few seconds. */
+  ping(point: Point, name: string): void;
 }
 
 export interface GameHooks {
@@ -30,6 +53,8 @@ export interface GameHooks {
   failed(error: unknown): void;
   /** Opens the "my games" screen. */
   showGames(): void;
+  /** With `?measure` in the address: the times there and back so far on the master's board, null to hide them (measure.ts). */
+  measured(summary: RoundTripSummary | null): void;
 }
 
 export interface GameView {
@@ -40,8 +65,30 @@ export interface GameView {
   reopen(): void;
 }
 
+/** Events of the stream (server/games.ts). */
+interface SnapshotEvent {
+  editor: boolean;
+  scene: SceneData | null;
+}
+
+interface PatchEvent {
+  sceneId: number;
+  version: number;
+  patch: Patch;
+}
+
+interface PingEvent {
+  sceneId: number;
+  x: number;
+  y: number;
+  userId: number;
+  name: string;
+}
+
 const GAME_HASH = /^#game=([1-9][0-9]{0,14})$/;
 const IDLE_CHECK_MS = 100;
+/** After the server refused the stream for a passing reason (too many tabs, a restart), it is opened again this much later. */
+const STREAM_RETRY_MS = 5000;
 /** The defaults and bounds of a registration code (admin.ts, server/auth.ts), which a game invite follows (R41). */
 const INVITE_USES = 1;
 const INVITE_MAX_USES = 1000;
@@ -53,17 +100,37 @@ export function startGame(hooks: GameHooks): GameView {
   panel.className = "game-panel";
   panel.hidden = true;
   document.body.append(panel);
+  const connection = labelled("p", "game.streamLost", "form-error");
+  connection.setAttribute("role", "status");
+  connection.hidden = true;
 
   /** The open game, null on the draft. */
   let openId: number | null = null;
   let info: GameInfo | null = null;
   /** The scene on the board (or being read), null when there is none to show. */
   let shownScene: number | null = null;
+  /** The scene on the board with the changes not yet back from the server; null for none or a read-only one. */
+  let live: LiveScene | null = null;
+  /** Whether the board shows the scene as an editor. */
+  let shownEditor = false;
+  let stream: GameStream | null = null;
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Events of the stream wait here while a stroke or a drag is under way or the scene is being read. */
+  const queue: { name: StreamEventName; data: unknown }[] = [];
+  let drainTimer: ReturnType<typeof setTimeout> | undefined;
+  let loading = 0;
+  let online = new Set<number>();
+  const onlineMarks = new Map<number, HTMLElement>();
   /** Changes go to the server one after another, in the order they were made. */
   let patches: Promise<void> = Promise.resolve();
+  /** Goes up when a change is refused: the changes waiting after it are dropped, the scene is read again. */
+  let sendRound = 0;
   let changeCount = 0;
   /** Only the latest read of the game is shown. */
   let loadCount = 0;
+  /** `?measure` in the address: a player answers each change from someone else with a ping, the master counts the time. */
+  const measure = measuring(location.search);
+  let roundTrips = new RoundTrips();
 
   const whenIdle = (): Promise<void> =>
     new Promise((resolve) => {
@@ -83,76 +150,74 @@ export function startGame(hooks: GameHooks): GameView {
     } while (seen !== patches);
   }
 
-  /** A failed request about the open game. A game that is gone (deleted, or the user removed) closes. */
+  /** The open game is gone (deleted, or the user removed): back to "my games". */
+  function gone(): void {
+    close();
+    hooks.showNotice("notice.gameGone");
+    hooks.showGames();
+  }
+
+  /** A failed request about the open game. A game that is gone closes. */
   function failed(error: unknown, gameId: number): void {
+    if (openId !== gameId) return;
+    const code = codeOf(error);
+    if (code === "auth.required" || code === "auth.mustChangePassword") hooks.failed(error);
+    else if (code === "game.notFound") gone();
+    else hooks.showNotice(errorKey(code));
+  }
+
+  // ---- changes of the board ----
+
+  function send(gameId: number, target: LiveScene, patch: Patch, inverse: Patch): void {
+    if (patch.length === 0 || live !== target) return;
+    target.local(patch, inverse);
+    changeCount++;
+    const round = sendRound;
+    patches = patches.then(async () => {
+      if (round !== sendRound || openId !== gameId) return;
+      // Only a change of the current scene reaches the players, so only it gets an answer.
+      if (measure && shownEditor && info !== null && target.sceneId === info.activeSceneId) roundTrips.sent(performance.now());
+      try {
+        await request("POST", `api/games/${gameId}/scenes/${target.sceneId}/patch`, { patch });
+      } catch (error) {
+        refused(gameId, target.sceneId, error);
+      }
+    });
+  }
+
+  /** A change the server did not take (403, 404, a network failure): the board no longer matches the server. */
+  function refused(gameId: number, sceneId: number, error: unknown): void {
+    sendRound++;
     if (openId !== gameId) return;
     const code = codeOf(error);
     if (code === "auth.required" || code === "auth.mustChangePassword") {
       hooks.failed(error);
     } else if (code === "game.notFound") {
-      close();
-      hooks.showNotice("notice.gameGone");
-      hooks.showGames();
+      gone();
     } else {
-      hooks.showNotice(errorKey(code));
+      hooks.showNotice("notice.changeRejected", { reason: t(errorKey(code)) });
+      void load(gameId, sceneId);
     }
   }
 
-  function send(gameId: number, sceneId: number, patch: Patch): void {
-    if (patch.length === 0) return;
-    changeCount++;
-    patches = patches.then(() =>
-      request("POST", `api/games/${gameId}/scenes/${sceneId}/patch`, { patch }).then(
-        () => undefined,
-        (error: unknown) => {
-          if (openId !== gameId) return;
-          if (codeOf(error) === "auth.required") {
-            hooks.failed(error);
-            return;
-          }
-          // The board no longer matches the server: say why and read the scene again.
-          hooks.showNotice("notice.changeRejected", { reason: t(errorKey(codeOf(error))) });
-          void load(gameId, sceneId);
-        },
-      ),
-    );
-  }
-
-  /**
-   * Reads the game and shows the scene `preferred` if the user may see it, else the current one (an editor
-   * without a current scene gets the first). It waits for strokes and sent changes to end, and reads again
-   * if a change was made while it read, so the board never drops a change of its own.
-   */
-  async function load(gameId: number, preferred: number | null): Promise<void> {
-    const mine = ++loadCount;
-    const current = (): boolean => mine === loadCount && openId === gameId;
-    for (;;) {
-      await whenIdle();
-      await drained();
-      if (!current()) return;
-      const before = changeCount;
-      let game: GameInfo;
-      let data: SceneData | null = null;
-      try {
-        game = await request<GameInfo>("GET", `api/games/${gameId}`);
-        const ids = game.scenes.map((scene) => scene.id);
-        const wanted = preferred !== null && ids.includes(preferred) ? preferred : (game.activeSceneId ?? (game.editor ? (ids[0] ?? null) : null));
-        if (wanted !== null) data = await request<SceneData>("GET", `api/games/${gameId}/scenes/${wanted}`);
-      } catch (error) {
-        if (current()) failed(error, gameId);
-        return;
-      }
-      if (!current()) return;
-      if (before !== changeCount || hooks.board.busy()) continue;
-      info = game;
-      shownScene = data?.id ?? null;
-      render();
-      showScene(game, data);
+  function sendPing(gameId: number, point: Point): void {
+    if (openId !== gameId) return;
+    // The ping is put on the current scene: the others see only that one.
+    if (live === null || info === null || live.sceneId !== info.activeSceneId) {
+      hooks.showNotice("notice.pingNotCurrent");
       return;
     }
+    request("POST", `api/games/${gameId}/ping`, { x: point.x, y: point.y }).catch((error: unknown) => {
+      if (codeOf(error) === "ping.tooMany") hooks.showNotice(errorKey("ping.tooMany"));
+      else failed(error, gameId);
+    });
   }
 
-  function showScene(game: GameInfo, data: SceneData | null): void {
+  /** Puts a scene from the server on the board, as an editor or a player; null shows an empty read-only board. */
+  function showScene(gameId: number, data: SceneData | null, editor: boolean): void {
+    shownScene = data?.id ?? null;
+    shownEditor = editor;
+    live = null;
     let scene = newScene();
     if (data) {
       try {
@@ -160,18 +225,175 @@ export function startGame(hooks: GameHooks): GameView {
       } catch (error) {
         if (!(error instanceof SceneError)) throw error;
         hooks.showNotice(error.code === "version" ? "notice.sceneNewer" : "notice.sceneBroken");
-        hooks.board.show(scene, null);
+        hooks.board.show(scene, { changed: null, player: !editor, ping: (point) => sendPing(gameId, point) });
         return;
       }
     }
-    const sceneId = data?.id;
-    hooks.board.show(scene, game.editor && sceneId !== undefined ? (patch) => send(game.id, sceneId, patch) : null);
+    const target = data ? new LiveScene(data.id, scene, data.version) : null;
+    live = target;
+    hooks.board.show(scene, {
+      changed: target ? (patch, inverse) => send(gameId, target, patch, inverse) : null,
+      player: !editor,
+      ping: (point) => sendPing(gameId, point),
+    });
+    render();
+  }
+
+  // ---- the stream ----
+
+  function connect(gameId: number): void {
+    stream?.close();
+    stream = openStream(gameId, {
+      event: (name, data) => {
+        if (openId !== gameId) return;
+        queue.push({ name, data });
+        drain();
+      },
+      connected: () => {
+        if (openId === gameId) connection.hidden = true;
+      },
+      lost: () => {
+        if (openId === gameId) disconnected();
+      },
+      failed: () => streamFailed(gameId),
+    });
+  }
+
+  /** Without the stream nobody is known to be online; the server sends the list again on reconnecting. */
+  function disconnected(): void {
+    connection.hidden = false;
+    online = new Set();
+    markOnline();
+  }
+
+  /** The server refused the stream: an ended session or a game that is gone ends it, anything else is tried again. */
+  function streamFailed(gameId: number): void {
+    if (openId !== gameId) return;
+    stream = null;
+    disconnected();
+    const retry = (): void => {
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => {
+        if (openId === gameId && stream === null) connect(gameId);
+      }, STREAM_RETRY_MS);
+    };
+    request<GameInfo>("GET", `api/games/${gameId}`).then(retry, (error: unknown) => {
+      const code = codeOf(error);
+      if (code === "auth.required" || code === "auth.mustChangePassword" || code === "game.notFound") failed(error, gameId);
+      else retry();
+    });
+  }
+
+  /** Handles the waiting events in order, unless a stroke, a drag or a read of the scene is under way. */
+  function drain(): void {
+    while (queue.length > 0 && loading === 0) {
+      if (hooks.board.busy()) {
+        if (drainTimer === undefined) {
+          drainTimer = setTimeout(() => {
+            drainTimer = undefined;
+            drain();
+          }, IDLE_CHECK_MS);
+        }
+        return;
+      }
+      const next = queue.shift();
+      if (next && openId !== null) handle(openId, next.name, next.data);
+    }
+  }
+
+  function handle(gameId: number, name: StreamEventName, data: unknown): void {
+    switch (name) {
+      case "scene.snapshot": {
+        const { editor, scene } = data as SnapshotEvent;
+        // The board already shows this state: it keeps its undo history and the changes on their way.
+        if (live && scene && live.sceneId === scene.id && live.version === scene.version && shownEditor === editor) return;
+        // An editor keeps the scene they opened, read again; a player sees what the server shows.
+        if (editor && shownEditor && shownScene !== null && scene?.id !== shownScene) void load(gameId, shownScene);
+        else showScene(gameId, scene, editor);
+        return;
+      }
+      case "scene.patch": {
+        const { sceneId, version, patch } = data as PatchEvent;
+        if (!live || live.sceneId !== sceneId) return;
+        let result: Received;
+        try {
+          result = live.receive(version, patch);
+        } catch (error) {
+          if (!(error instanceof SceneError)) throw error;
+          result = "gap";
+        }
+        if (result === "gap") {
+          void load(gameId, sceneId);
+        } else if (result === "applied") {
+          hooks.board.refresh();
+          // The board draws on the next frame; the answer goes right after it.
+          if (!shownEditor) echoChange(measure, (callback) => requestAnimationFrame(callback), (point) => sendPing(gameId, point));
+        }
+        return;
+      }
+      case "scene.switch":
+        refreshInfo(gameId);
+        return;
+      case "presence":
+        online = new Set((data as { online: number[] }).online);
+        markOnline();
+        return;
+      case "ping": {
+        const ping = data as PingEvent;
+        if (measure && shownEditor && info !== null && ping.userId !== (info.gmId ?? info.ownerId)) {
+          const at = performance.now();
+          if (roundTrips.answered(at) !== null) hooks.measured(roundTrips.summary());
+        }
+        if (live && ping.sceneId === live.sceneId) hooks.board.ping({ x: ping.x, y: ping.y }, ping.name);
+        return;
+      }
+    }
+  }
+
+  // ---- reading the game ----
+
+  /**
+   * Reads the game and shows the scene `preferred` if the user may see it, else the current one (an editor
+   * without a current scene gets the first). It waits for strokes and sent changes to end, and reads again
+   * if a change was made while it read, so the board never drops a change of its own. Stream events wait meanwhile.
+   */
+  async function load(gameId: number, preferred: number | null): Promise<void> {
+    const mine = ++loadCount;
+    const current = (): boolean => mine === loadCount && openId === gameId;
+    loading++;
+    try {
+      for (;;) {
+        await whenIdle();
+        await drained();
+        if (!current()) return;
+        const before = changeCount;
+        let game: GameInfo;
+        let data: SceneData | null = null;
+        try {
+          game = await request<GameInfo>("GET", `api/games/${gameId}`);
+          const ids = game.scenes.map((scene) => scene.id);
+          const wanted = preferred !== null && ids.includes(preferred) ? preferred : (game.activeSceneId ?? (game.editor ? (ids[0] ?? null) : null));
+          if (wanted !== null) data = await request<SceneData>("GET", `api/games/${gameId}/scenes/${wanted}`);
+        } catch (error) {
+          if (current()) failed(error, gameId);
+          return;
+        }
+        if (!current()) return;
+        if (before !== changeCount || hooks.board.busy()) continue;
+        info = game;
+        showScene(gameId, data, game.editor);
+        return;
+      }
+    } finally {
+      loading--;
+      drain();
+    }
   }
 
   /** Reads the game again for the panel only; the board and its undo history stay. */
   function refreshInfo(gameId: number): void {
     request<GameInfo>("GET", `api/games/${gameId}`).then((game) => {
-      if (openId !== gameId) return;
+      if (openId !== gameId || JSON.stringify(game) === JSON.stringify(info)) return;
       info = game;
       render();
     }, (error: unknown) => failed(error, gameId));
@@ -196,7 +418,8 @@ export function startGame(hooks: GameHooks): GameView {
         if (openId !== null) void load(openId, shownScene);
       }),
     );
-    panel.replaceChildren(top);
+    panel.replaceChildren(top, connection);
+    onlineMarks.clear();
     const game = info;
     if (!game) return;
     const title = document.createElement("h2");
@@ -238,6 +461,7 @@ export function startGame(hooks: GameHooks): GameView {
       );
     }
     if (actions.childElementCount > 0) panel.append(actions);
+    markOnline();
   }
 
   function section(titleKey: Key): HTMLElement {
@@ -325,11 +549,13 @@ export function startGame(hooks: GameHooks): GameView {
     const name = document.createElement("span");
     name.className = "member-name";
     name.textContent = member.displayName;
+    const mark = labelled("span", "game.online", "online");
+    onlineMarks.set(member.id, mark);
     const role = document.createElement("span");
     role.className = "muted";
     role.append(labelled("span", member.role === "gm" ? "games.role.gm" : "games.role.player"));
     if (member.id === game.ownerId) role.append(", ", labelled("span", "games.owner"));
-    item.append(name, role);
+    item.append(name, mark, role);
     if (!game.editor || member.role === "gm") return item;
 
     const params = { name: member.displayName };
@@ -349,6 +575,11 @@ export function startGame(hooks: GameHooks): GameView {
       );
     }
     return item;
+  }
+
+  /** Shows "online" at the members with an open stream. */
+  function markOnline(): void {
+    for (const [id, mark] of onlineMarks) mark.hidden = !online.has(id);
   }
 
   function membersSection(game: GameInfo): HTMLElement {
@@ -391,14 +622,15 @@ export function startGame(hooks: GameHooks): GameView {
   // ---- opening and closing ----
 
   function open(gameId: number): void {
+    close();
     openId = gameId;
-    info = null;
-    shownScene = null;
     // Kept in the address, so a reload opens the game again.
     history.replaceState(null, "", `${location.pathname}${location.search}#game=${gameId}`);
     panel.hidden = false;
     render();
-    void load(gameId, null);
+    refreshInfo(gameId);
+    // The first event of the stream is the snapshot of the scene to show.
+    connect(gameId);
   }
 
   function close(): void {
@@ -406,6 +638,17 @@ export function startGame(hooks: GameHooks): GameView {
     openId = null;
     info = null;
     shownScene = null;
+    live = null;
+    stream?.close();
+    stream = null;
+    clearTimeout(retryTimer);
+    clearTimeout(drainTimer);
+    drainTimer = undefined;
+    queue.length = 0;
+    online = new Set();
+    roundTrips = new RoundTrips();
+    hooks.measured(null);
+    connection.hidden = true;
     loadCount++;
     panel.hidden = true;
     panel.replaceChildren();

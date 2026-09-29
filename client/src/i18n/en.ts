@@ -37,6 +37,8 @@ export const en: Record<keyof typeof ru, string> = {
   "tool.pencilHint": "Pencil (P): freehand marks over the map",
   "tool.ruler": "Ruler",
   "tool.rulerHint": "Ruler (M): drag from square to square, the distance in feet and squares",
+  "tool.ping": "Ping",
+  "tool.pingHint": "Ping (G): a click shows everyone in the game a “look here” ring for 3 seconds",
 
   "toolbar.object": "Object",
   "toolbar.side": "Side",
@@ -135,6 +137,7 @@ export const en: Record<keyof typeof ru, string> = {
 
   "status.cell": "Square {x}, {y}",
   "status.scale": "1 square = 5 ft",
+  "status.measure": "Round trips: {count}, median {median} ms, worst {worst} ms",
 
   "notice.close": "Close",
   "notice.draftBroken": "The draft is damaged and was not opened. It has been kept separately; an empty scene was opened.",
@@ -238,8 +241,10 @@ export const en: Record<keyof typeof ru, string> = {
   "game.renamePrompt": "New scene name:",
   "game.scene": "Scene",
   "game.noScene": "The master is not showing a scene yet.",
-  "game.playerHint": "You are a player: you can move the view and measure with the ruler. The master's changes appear after “Reload scene”.",
+  "game.playerHint": "You are a player: move the tokens of the side “Players”, measure with the ruler and put a ping. The master's changes appear at once.",
   "game.members": "Members",
+  "game.online": "online",
+  "game.streamLost": "No connection to the server, reconnecting…",
   "game.makeMaster": "Make master",
   "game.confirmMakeMaster": "Make {name} the master? Only they will change scenes, invites and members.",
   "game.remove": "Remove",
@@ -261,6 +266,7 @@ export const en: Record<keyof typeof ru, string> = {
   "notice.changeRejected": "The server did not accept the change: {reason} The scene was read again from the server.",
   "notice.sceneNewer": "The scene was saved by a newer version of the app and does not open here.",
   "notice.sceneBroken": "The scene from the server is damaged and was not opened.",
+  "notice.pingNotCurrent": "A ping goes on the current scene, the one the players see. Make this scene current or open the current one.",
 
   "error.request.notFound": "Not found.",
   "error.request.host": "The site was opened by a name the server does not know. Open it at an address the server prints at start-up, or add the name to allowedHosts in settings.json.",
@@ -296,6 +302,8 @@ export const en: Record<keyof typeof ru, string> = {
   "error.invite.notFound": "Invite code not found.",
   "error.invite.expired": "The invite has expired. Ask the master for a new one.",
   "error.invite.tooManyAttempts": "Too many wrong codes from this address. Wait 15 minutes.",
+  "error.stream.tooMany": "Too many tabs with games are open. Close the ones you do not need.",
+  "error.ping.tooMany": "Too many pings in a row. Wait a second.",
   "error.server.error": "Server error. Try again.",
   "error.network": "The server does not answer.",
   "error.unknown": "Something went wrong.",
