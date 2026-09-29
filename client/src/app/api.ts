@@ -47,7 +47,7 @@ export interface AdminInvite {
   expiresAt: number;
 }
 
-/** The answer to a registration:the new user, and the game an administrator's invite made them a player of (R43). */
+/** The answer to a registration: the new user, and the game an administrator's invite made them a player of (R43). */
 export interface Registered extends Me {
   gameId: number | null;
 }

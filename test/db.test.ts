@@ -7,7 +7,9 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { afterEach, beforeEach, describe, test } from "node:test";
 
+import { Accounts, sha256 } from "../server/auth.ts";
 import { Database, MIGRATIONS, runMigrations } from "../server/db.ts";
+import type { ApiError } from "../server/errors.ts";
 
 let dir = "";
 let file = "";
@@ -36,7 +38,7 @@ function inspect(): { version: number; schema: unknown[] } {
 const TABLE_COLUMNS = {
   users: ["id", "login", "display_name", "pass_hash", "pass_salt", "pass_params", "pass_version", "role", "must_change_password", "disabled", "settings_json", "created_at"],
   sessions: ["token_hash", "user_id", "pass_version", "expires_at"],
-  invites: ["id", "code_hash", "kind", "game_id", "created_by", "expires_at", "max_uses", "uses"],
+  invites: ["id", "code_hash", "kind", "game_id", "created_by", "expires_at", "max_uses", "uses", "registers"],
   games: ["id", "title", "kind", "owner_id", "gm_id", "active_scene_id", "created_at"],
   members: ["game_id", "user_id", "role", "joined_at"],
   scenes: ["id", "game_id", "name", "visible", "state_json", "version", "updated_at"],
@@ -105,7 +107,8 @@ describe("migrations", () => {
     assert.deepEqual(inspect(), upgraded, "a second run changes nothing");
   });
 
-  test("a version 2 database reaches version 3: codes get ids in their order, and the codes R50 deletes go", () => {
+  test("a version 2 database reaches version 3: codes get ids in their order, the codes R50 deletes go, and only an administrator's codes register", async () => {
+    const hashOf = (n: number): Buffer => sha256(`code${n}`);
     const old = new DatabaseSync(file);
     runMigrations(old, MIGRATIONS.slice(0, 2));
     const people: [string, "admin" | "user", number][] = [
@@ -135,7 +138,7 @@ describe("migrations", () => {
     ];
     for (const [n, kind, login] of codes) {
       old.prepare("INSERT INTO invites (code_hash, kind, game_id, created_by, expires_at, max_uses, uses) VALUES (?, ?, ?, ?, 100, 5, 1)").run(
-        new Uint8Array(32).fill(n),
+        hashOf(n),
         kind,
         kind === "game" ? 1 : null,
         id(login),
@@ -148,8 +151,8 @@ describe("migrations", () => {
       assert.equal(inspect().version, 3);
       // Kept: the administrator's codes, a demoted administrator's game invite, an enabled master's game invite.
       const kept = [1, 3, 6, 8];
-      for (const [n] of codes) assert.equal(db.findInvite(new Uint8Array(32).fill(n)) !== undefined, kept.includes(n), `code ${n}`);
-      assert.deepEqual(db.findInvite(new Uint8Array(32).fill(3)), { kind: "game", gameId: 1, createdBy: id("demoted"), creatorIsAdmin: false, expiresAt: 100, uses: 1, maxUses: 5 });
+      for (const [n] of codes) assert.equal(db.findInvite(hashOf(n)) !== undefined, kept.includes(n), `code ${n}`);
+      assert.deepEqual(db.findInvite(hashOf(3)), { kind: "game", gameId: 1, createdBy: id("demoted"), registers: false, expiresAt: 100, uses: 1, maxUses: 5 });
       assert.deepEqual(
         db.listActiveInvites(50).map(({ id: inviteId, creatorName }) => [inviteId, creatorName]),
         [
@@ -159,6 +162,15 @@ describe("migrations", () => {
           [1, "ADMIN"],
         ],
       );
+      // `registers` from the creator's role at the migration: the administrator's codes register, the game invite of a
+      // former administrator never does, not even with the role back (stage 26b review).
+      assert.deepEqual([1, 3, 6, 8].map((n) => db.findInvite(hashOf(n))?.registers), [true, false, false, true]);
+      db.setRole(id("demoted"), "admin");
+      db.setRole(id("master"), "admin");
+      const accounts = new Accounts(db, () => 50);
+      const register = (login: string, n: number) => accounts.register({ login, displayName: "N", password: `${login}-password`, code: `code${n}` }, false, "127.0.0.1");
+      for (const n of [3, 6]) await assert.rejects(register(`newbie${n}`, n), (error: ApiError) => error.code === "auth.inviteInvalid", `code ${n}`);
+      assert.equal((await register("newbie8", 8)).gameId, 1, "the administrator's game invite still registers");
       // AUTOINCREMENT: the id of the newest code, once deleted, is never given again.
       assert.equal(db.deleteInvite(4), true);
       db.insertInvite(new Uint8Array(32).fill(9), "register", null, id("admin"), 100, 1);
@@ -235,7 +247,7 @@ describe("queries", () => {
       const [fresh, stale] = [1, 2].map((n) => new Uint8Array(32).fill(n));
       db.insertInvite(fresh, "register", null, admin.id, 100, 2);
       db.insertInvite(stale, "register", null, admin.id, 10, 5);
-      assert.deepEqual(db.findInvite(fresh), { kind: "register", gameId: null, createdBy: admin.id, creatorIsAdmin: true, expiresAt: 100, uses: 0, maxUses: 2 });
+      assert.deepEqual(db.findInvite(fresh), { kind: "register", gameId: null, createdBy: admin.id, registers: true, expiresAt: 100, uses: 0, maxUses: 2 });
       assert.equal(db.useInvite(fresh, "game", 50), false, "a code is used only as its own kind");
       assert.equal(db.useInvite(stale, "register", 50), false);
       assert.equal(db.useInvite(fresh, "register", 50), true);
@@ -273,7 +285,7 @@ describe("queries", () => {
     db = new Database(file);
     try {
       db.deleteExpired(50);
-      assert.deepEqual(db.findInvite(expired), { kind: "game", gameId: game.id, createdBy: admin.id, creatorIsAdmin: true, expiresAt: 10, uses: 0, maxUses: 5 });
+      assert.deepEqual(db.findInvite(expired), { kind: "game", gameId: game.id, createdBy: admin.id, registers: true, expiresAt: 10, uses: 0, maxUses: 5 });
       assert.equal(db.findInvite(usedUp), undefined);
       assert.equal(db.findInvite(register), undefined, "an expired registration code goes as before");
       db.deleteGameInvites(game.id);

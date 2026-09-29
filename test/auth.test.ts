@@ -700,7 +700,7 @@ describe("forged and oversized requests", () => {
     }
   });
 
-  test("sign-in and registration bodies over 4 KiB, others over 2 MiB, get 413", async () => {
+  test("sign-in, registration and DELETE bodies over 4 KiB, others over 2 MiB, get 413", async () => {
     const { site, admin } = await siteWithAdmin();
     const headers = { Origin: site.base, "Content-Type": "application/json" };
     const tooLarge = { status: 413, text: '{"error":"request.tooLarge"}' };
@@ -715,6 +715,12 @@ describe("forged and oversized requests", () => {
     );
     // A stream without a length is cut at the limit: the request is never finished, the answer still comes.
     assert.deepEqual(short(await rawRequest(site, "POST", "/api/auth/login", { ...headers, "Transfer-Encoding": "chunked" }, ["x".repeat(3000), "x".repeat(3000)])), tooLarge);
+
+    // A DELETE has no useful body: over 4 KiB is refused, 200 KB here (stage 26b review).
+    for (const url of ["/api/admin/invites/1", "/api/games/1", "/api/games/1/invites/1", "/api/games/1/master", "/api/games/1/members/2"]) {
+      assert.deepEqual(short(await rawRequest(site, "DELETE", url, { ...headers, Cookie: admin, "Content-Length": String(200 * 1000) })), tooLarge, url);
+      assert.deepEqual(short(await rawRequest(site, "DELETE", url, { ...headers, Cookie: admin, "Content-Length": String(4 * 1024 + 1) })), tooLarge, url);
+    }
 
     const padded = JSON.stringify({ login: "admin", password: ADMIN.password, pad: "x".repeat(4 * 1024 - 60) });
     assert.ok(Buffer.byteLength(padded) <= 4 * 1024);

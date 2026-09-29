@@ -383,6 +383,47 @@ describe("codes of a disabled or demoted user are deleted (R50)", () => {
     assert.deepEqual(await memberIds(site, gameId, users.boss), [users.boss.id]);
     assert.equal((await call(site, "POST", `/api/join/${adminInvite}`, users.kim.cookie)).status, 200);
   });
+
+  test("making a user who is no administrator a user again deletes nothing: an ordinary master's invites stay", async () => {
+    const { site, users } = await siteWith("master", "kim");
+    const { gameId } = await gameOf(site, users.master);
+    const code = await invite(site, gameId, users.master);
+    assert.equal((await call(site, "POST", "/api/admin/users", users.admin.cookie, { action: "setRole", id: users.master.id, role: "user" })).status, 200);
+    assert.equal((await activeCodes(site, users.admin)).length, 1);
+    assert.equal((await call(site, "POST", `/api/join/${code}`, users.kim.cookie)).status, 200);
+  });
+});
+
+describe("only a code made by an active administrator registers (R43, stage 26b review)", () => {
+  const setRole = async (site: Site, admin: Person, person: Person, role: string): Promise<void> => {
+    assert.equal((await call(site, "POST", "/api/admin/users", admin.cookie, { action: "setRole", id: person.id, role })).status, 200);
+  };
+
+  test("an ordinary master's invite does not register once they become an administrator; one made afterwards does", async () => {
+    const { site, users } = await siteWith("master");
+    const { gameId } = await gameOf(site, users.master);
+    const before = await invite(site, gameId, users.master);
+    await setRole(site, users.admin, users.master, "admin");
+    assertError(await register(site, "newbie", before), "auth.inviteInvalid");
+    assert.equal(await loginTaken(site, users.admin, "newbie"), false);
+    const after = await invite(site, gameId, users.master);
+    const registered = await register(site, "newbie", after);
+    assert.equal(registered.status, 201);
+    assert.equal(registered.body.gameId, gameId);
+  });
+
+  test("an invite made without the role does not register after the role comes back, and the deleted ones stay gone", async () => {
+    const { site, users } = await siteWith("boss");
+    await setRole(site, users.admin, users.boss, "admin");
+    const { gameId } = await gameOf(site, users.boss);
+    const asAdmin = await invite(site, gameId, users.boss);
+    await setRole(site, users.admin, users.boss, "user");
+    const asUser = await invite(site, gameId, users.boss);
+    assertError(await register(site, "newbie", asUser), "auth.inviteInvalid");
+    await setRole(site, users.admin, users.boss, "admin");
+    for (const code of [asAdmin, asUser]) assertError(await register(site, "newbie", code), "auth.inviteInvalid");
+    assert.equal(await loginTaken(site, users.admin, "newbie"), false);
+  });
 });
 
 describe("the administrator's list of codes and revoking (R50)", () => {
