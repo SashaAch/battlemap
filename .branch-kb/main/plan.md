@@ -351,6 +351,8 @@ data/                       база и настройки сервера, не 
 
 Как сделано в этапе 27 (Р45): `PUT /api/me/settings` принимает ещё `voidColor` и `gridColor` (только `#rrggbb`, `null` возвращает цвет темы) и `toolsExpanded` (true или false); остальное 400 `request.format`. Сервер раздаёт шрифты строго по имени: `fonts/fonts.css`, `fonts/*.woff2` (`font/woff2`), `fonts/OFL-*.txt`.
 
+Как сделано в доработке 26b (Р50, Р52): `GET /api/admin/invites` и `DELETE /api/admin/invites/:id` (администратор; список действующих кодов обоих видов без кода и хеша, отзыв 204, нет такого 404 `admin.inviteNotFound`); `GET /api/games/:id/invites` и `DELETE /api/games/:id/invites/:inviteId` (кто может создавать приглашения этой игры; чужое или неизвестное 404 `invite.notFound`). Отключение удаляет сессии и все коды человека, снятие роли администратора все его коды; возврат ничего не оживляет. Регистрирует только код с `registers`, чей создатель сейчас действующий администратор. У DELETE тело не больше 4 КиБ.
+
 ### 6.5. База данных
 
 SQLite в файле `data/battlemap.db` через `node:sqlite` (Р17). Версия схемы в `PRAGMA user_version`, миграции по порядку в `server/db.ts`, каждая в транзакции. Таблицы:
@@ -359,7 +361,7 @@ SQLite в файле `data/battlemap.db` через `node:sqlite` (Р17). Вер
 |---|---|
 | `users` | id, login, display_name, pass_hash, pass_salt, pass_params (параметры scrypt), pass_version, role, must_change_password, disabled, settings_json (язык, тема), created_at |
 | `sessions` | token_hash, user_id, pass_version, expires_at |
-| `invites` | code_hash (SHA-256 кода), kind (регистрация или игра), game_id, created_by, expires_at, max_uses, uses (Р38, Р41) |
+| `invites` | id, code_hash (SHA-256 кода), kind (регистрация или игра), game_id, created_by, expires_at, max_uses, uses, registers (создатель был действующим администратором при создании; миграция 3) (Р38, Р41, Р43, Р50) |
 | `games` | id, title, kind (с мастером или личная), owner_id, gm_id (пусто у личной), active_scene_id, created_at |
 | `members` | game_id, user_id, role, joined_at |
 | `scenes` | id, game_id, name, visible, state_json, version (число сохранённых изменений), updated_at |
