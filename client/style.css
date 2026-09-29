@@ -101,6 +101,65 @@ select {
   padding: 4px 10px;
 }
 
+input[type="text"] {
+  font: inherit;
+  color: var(--ui-fg);
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+/* Object signs and colour swatches: icon-only buttons, the name is in the tooltip. */
+.icons button,
+#token-sides button,
+#mark-colors button {
+  display: inline-flex;
+  align-items: center;
+  padding: 3px;
+}
+
+.icons canvas {
+  display: block;
+  width: 22px;
+  height: 22px;
+}
+
+dialog {
+  color: var(--ui-fg);
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 8px;
+  padding: 16px;
+}
+
+dialog::backdrop {
+  background: var(--ui-backdrop);
+}
+
+dialog form {
+  display: grid;
+  gap: 10px;
+  min-width: 240px;
+}
+
+dialog h2 {
+  margin: 0;
+  font-size: 16px;
+}
+
+dialog label {
+  display: grid;
+  gap: 4px;
+}
+
+.dialog-buttons {
+  display: flex;
+  flex-direction: row-reverse;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
 button:hover:not(:disabled) {
   background: var(--ui-hover);
 }

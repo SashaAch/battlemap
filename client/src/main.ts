@@ -1,12 +1,15 @@
 // Start-up: interface language, theme, draft in localStorage, toolbar with the tools, palette, status bar and the board.
 
-import { EDGE_TYPES, TERRAIN } from "./board/catalog.ts";
+import { EDGE_TYPES, isSideId, isSizeId, MARK_COLORS, OBJECT_TYPES, SIDES, SIZES, TERRAIN } from "./board/catalog.ts";
 import type { TerrainId } from "./board/catalog.ts";
 import { cellAt, DEFAULT_SCALE, panBy } from "./board/geometry.ts";
+import { editTokenPatch } from "./board/pieces.ts";
 import { drawBoard, fitCanvas, readBoardColors } from "./board/render.ts";
 import type { BoardColors, Viewport } from "./board/render.ts";
+import { drawObjectSign } from "./board/signs.ts";
 import { ENCLOSE_LIMIT, ERASE_FILTERS } from "./board/edit.ts";
-import { newHistory, redo, undo } from "./board/store.ts";
+import { applyToChange, beginChange, DIAGONAL_RULES, diagonalRule, finishChange, isToken, newHistory, redo, undo } from "./board/store.ts";
+import type { Patch } from "./board/store.ts";
 import { attachTools, BRUSH_SIZES, TOOLS } from "./board/tools.ts";
 import type { Board } from "./board/tools.ts";
 import { openDraft, saveDraft } from "./draft.ts";
@@ -66,6 +69,20 @@ const edgeGroup = byId("edge-group", HTMLElement);
 const edgeTypes = byId("edge-types", HTMLElement);
 const eraseGroup = byId("erase-group", HTMLElement);
 const eraseFilters = byId("erase-filters", HTMLElement);
+const objectGroup = byId("object-group", HTMLElement);
+const objectTypes = byId("object-types", HTMLElement);
+const tokenGroup = byId("token-group", HTMLElement);
+const tokenSides = byId("token-sides", HTMLElement);
+const tokenSize = byId("token-size", HTMLSelectElement);
+const tokenName = byId("token-name", HTMLInputElement);
+const markGroup = byId("mark-group", HTMLElement);
+const markColors = byId("mark-colors", HTMLElement);
+const diagonalSelect = byId("diagonal", HTMLSelectElement);
+const tokenDialog = byId("token-dialog", HTMLDialogElement);
+const tokenForm = byId("token-form", HTMLFormElement);
+const editSide = byId("edit-side", HTMLSelectElement);
+const editSize = byId("edit-size", HTMLSelectElement);
+const editName = byId("edit-name", HTMLInputElement);
 const languageSelect = byId("language", HTMLSelectElement);
 const themeSelect = byId("theme", HTMLSelectElement);
 const terrainList = byId("terrain-list", HTMLElement);
@@ -151,11 +168,15 @@ const board: Board = {
   scene: draft.scene,
   history: newHistory(),
   camera: { x: 0, y: 0, scale: DEFAULT_SCALE },
-  tool: TOOLS[0],
+  tool: "brush",
   terrain: TERRAIN[0].id,
   brushSize: BRUSH_SIZES[0],
   edgeType: EDGE_TYPES[0],
   eraseFilter: ERASE_FILTERS[0],
+  objectType: OBJECT_TYPES[0],
+  tokenDraft: { name: "", side: "enemies", size: "medium" },
+  markColor: MARK_COLORS[0].value,
+  selection: null,
   hover: null,
 };
 
@@ -172,7 +193,7 @@ function redraw(): void {
     // The middle of the board stays in place when the window changes size.
     board.camera = panBy(board.camera, (next.width - viewport.width) / 2, (next.height - viewport.height) / 2);
     viewport = next;
-    drawBoard(ctx, viewport, board.scene, board.camera, colors, tools.cursor());
+    drawBoard(ctx, viewport, board.scene, board.camera, colors, tools.overlays());
   });
 }
 
@@ -194,8 +215,17 @@ function updateHistoryButtons(): void {
 
 function sceneChanged(): void {
   updateHistoryButtons();
+  diagonalSelect.value = diagonalRule(board.scene);
   scheduleSave();
   redraw();
+}
+
+/** A change of one patch made outside the tools: the diagonal rule, the token editor. */
+function commit(patch: Patch): void {
+  if (patch.length === 0 || board.history.open) return;
+  beginChange(board.history);
+  applyToChange(board.scene, board.history, patch);
+  if (finishChange(board.history)) sceneChanged();
 }
 
 // Both do nothing while a stroke is under way (see beginChange in store.ts).
@@ -268,12 +298,16 @@ const markEraseFilter = choiceButtons(eraseFilters, ERASE_FILTERS, (filter) => `
   markEraseFilter(filter);
 });
 
-// Each tool shows only its own options: size for the brush and the eraser, edge type for walls, filter for the eraser.
+// Each tool shows only its own options: size for the brush and the eraser, edge type for walls, filter for the eraser,
+// the symbol for objects, side, size and name for tokens, colour for the pencil.
 function updateTools(): void {
   markTool(board.tool);
   sizeGroup.hidden = board.tool !== "brush" && board.tool !== "eraser";
   edgeGroup.hidden = board.tool !== "walls";
   eraseGroup.hidden = board.tool !== "eraser";
+  objectGroup.hidden = board.tool !== "objects";
+  tokenGroup.hidden = board.tool !== "tokens";
+  markGroup.hidden = board.tool !== "pencil";
 }
 
 const sizeButtons = BRUSH_SIZES.map((size) => {
@@ -318,6 +352,122 @@ function updateTerrainButtons(): void {
   for (const { id, button } of terrainButtons) button.setAttribute("aria-pressed", String(id === board.terrain));
 }
 
+// ---- objects, tokens, pencil, diagonal rule (stage 3) ----
+
+const ICON_PX = 22;
+
+/** An object button shows its sign drawn on a small canvas, the name is in the tooltip. */
+const objectButtons = OBJECT_TYPES.map((type) => {
+  const button = toggleButton(() => {
+    board.objectType = type;
+    updateObjectButtons();
+  });
+  button.dataset.i18nTitle = `object.${type}`;
+  const icon = document.createElement("canvas");
+  const ratio = window.devicePixelRatio || 1;
+  icon.width = icon.height = Math.round(ICON_PX * ratio);
+  icon.className = "icon";
+  const iconCtx = icon.getContext("2d");
+  if (iconCtx) drawObjectSign(iconCtx, type, 0, 0, icon.width);
+  button.append(icon);
+  objectTypes.append(button);
+  return { type, button };
+});
+
+function updateObjectButtons(): void {
+  for (const { type, button } of objectButtons) button.setAttribute("aria-pressed", String(type === board.objectType));
+}
+
+/** A button with a colour swatch; the colour comes from the catalog, the same in every theme. */
+function swatchButton(color: string, onPress: () => void): HTMLButtonElement {
+  const button = toggleButton(onPress);
+  const swatch = document.createElement("span");
+  swatch.className = "swatch";
+  swatch.style.backgroundColor = color;
+  button.append(swatch);
+  return button;
+}
+
+const sideButtons = SIDES.map((side) => {
+  const button = swatchButton(side.color, () => {
+    board.tokenDraft.side = side.id;
+    updateSideButtons();
+  });
+  button.dataset.i18nTitle = `side.${side.id}`;
+  tokenSides.append(button);
+  return { id: side.id, button };
+});
+
+function updateSideButtons(): void {
+  for (const { id, button } of sideButtons) button.setAttribute("aria-pressed", String(id === board.tokenDraft.side));
+}
+
+for (const size of SIZES) {
+  tokenSize.append(option(size.id, `size.${size.id}`));
+  editSize.append(option(size.id, `size.${size.id}`));
+}
+for (const side of SIDES) editSide.append(option(side.id, `side.${side.id}`));
+tokenSize.value = board.tokenDraft.size;
+tokenSize.addEventListener("change", () => {
+  if (isSizeId(tokenSize.value)) board.tokenDraft.size = tokenSize.value;
+  redraw();
+});
+tokenName.addEventListener("input", () => {
+  board.tokenDraft.name = tokenName.value;
+});
+
+const markColorButtons = MARK_COLORS.map((color) => {
+  const button = swatchButton(color.value, () => {
+    board.markColor = color.value;
+    updateMarkColorButtons();
+  });
+  button.dataset.i18nTitle = `color.${color.id}`;
+  markColors.append(button);
+  return { value: color.value, button };
+});
+
+function updateMarkColorButtons(): void {
+  for (const { value, button } of markColorButtons) button.setAttribute("aria-pressed", String(value === board.markColor));
+}
+
+// The diagonal rule is a setting of the scene: changing it is a change that undo takes back (Р27).
+for (const rule of DIAGONAL_RULES) diagonalSelect.append(option(rule, `diagonal.${rule}`));
+diagonalSelect.value = diagonalRule(board.scene);
+diagonalSelect.addEventListener("change", () => {
+  const rule = DIAGONAL_RULES.find((value) => value === diagonalSelect.value);
+  if (rule && rule !== diagonalRule(board.scene)) commit([["settings", "diagonal", rule]]);
+  else diagonalSelect.value = diagonalRule(board.scene);
+});
+
+// The token editor opens on a double click with the select tool; the name goes into an input, never into markup.
+let editedToken: string | null = null;
+
+function openTokenEditor(id: string): void {
+  const token = board.scene.tokens[id];
+  if (!isToken(token) || board.history.open) return;
+  editedToken = id;
+  editSide.value = token.side;
+  editSize.value = token.size;
+  editName.value = token.name;
+  tokenDialog.showModal();
+}
+
+// Both buttons submit the form, which closes the dialog; Escape closes it without a submit.
+tokenForm.addEventListener("submit", (e) => {
+  const id = editedToken;
+  editedToken = null;
+  const button = e.submitter;
+  if (id === null || !(button instanceof HTMLButtonElement) || button.value !== "save") return;
+  if (!isSideId(editSide.value) || !isSizeId(editSize.value)) return;
+  const patch = editTokenPatch(board.scene, id, { side: editSide.value, size: editSize.value, name: editName.value });
+  if (patch === null) showNotice("notice.tinyFull");
+  else commit(patch);
+});
+
+updateObjectButtons();
+updateSideButtons();
+updateMarkColorButtons();
+
 for (const code of LANGS) languageSelect.append(option(code, `lang.${code}`));
 languageSelect.value = getLang();
 languageSelect.addEventListener("change", () => {
@@ -353,6 +503,10 @@ const tools = attachTools(canvas, board, {
   brushSizeChanged: updateBrushSizes,
   toolChanged: updateTools,
   enclosureTooBig: () => showNotice("notice.enclosureTooBig", { limit: ENCLOSE_LIMIT }),
+  tinyCellFull: () => showNotice("notice.tinyFull"),
+  editToken: openTokenEditor,
+  rulerLabel: ({ feet, cells }) => t("measure.ruler", { feet, cells }),
+  costLabel: (feet) => t("measure.cost", { feet }),
   undo: doUndo,
   redo: doRedo,
 });

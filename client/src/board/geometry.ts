@@ -52,6 +52,11 @@ export function isCellInRange(x: number, y: number): boolean {
   return Math.abs(x) <= MAX_COORD && Math.abs(y) <= MAX_COORD;
 }
 
+/** Whether a world point lies on the cells of the key range, their far sides included. */
+export function isPointInRange(x: number, y: number): boolean {
+  return x >= -MAX_COORD && x <= MAX_COORD + 1 && y >= -MAX_COORD && y <= MAX_COORD + 1;
+}
+
 /** Scales the camera by `factor` keeping the world point under `screen` in place. */
 export function zoomAt(camera: Camera, screen: Point, factor: number): Camera {
   const scale = Math.min(MAX_SCALE, Math.max(MIN_SCALE, camera.scale * factor));

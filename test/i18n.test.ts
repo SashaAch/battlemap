@@ -73,6 +73,8 @@ describe("themes.css", () => {
 
   test("the board colours read by the canvas are there", () => {
     const variables = themes.values().next().value ?? [];
-    for (const name of ["--board-void", "--board-grid", "--board-cursor"]) assert.ok(variables.includes(name), name);
+    for (const name of ["--board-void", "--board-grid", "--board-cursor", "--board-label-bg", "--board-label-fg"]) {
+      assert.ok(variables.includes(name), name);
+    }
   });
 });

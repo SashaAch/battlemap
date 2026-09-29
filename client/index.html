@@ -30,6 +30,30 @@
       <span id="erase-label" data-i18n="toolbar.eraseFilter"></span>
       <span id="erase-filters" class="segmented"></span>
     </div>
+    <div id="object-group" class="group" role="group" aria-labelledby="object-label">
+      <span id="object-label" data-i18n="toolbar.object"></span>
+      <span id="object-types" class="segmented icons"></span>
+    </div>
+    <div id="token-group" class="group" role="group">
+      <span id="side-label" data-i18n="toolbar.side"></span>
+      <span id="token-sides" class="segmented" role="group" aria-labelledby="side-label"></span>
+      <label class="group">
+        <span data-i18n="toolbar.tokenSize"></span>
+        <select id="token-size"></select>
+      </label>
+      <label class="group">
+        <span data-i18n="toolbar.tokenName"></span>
+        <input id="token-name" type="text" maxlength="40" size="12" autocomplete="off">
+      </label>
+    </div>
+    <div id="mark-group" class="group" role="group" aria-labelledby="mark-label">
+      <span id="mark-label" data-i18n="toolbar.color"></span>
+      <span id="mark-colors" class="segmented"></span>
+    </div>
+    <label class="group" data-i18n-title="toolbar.diagonalHint">
+      <span data-i18n="toolbar.diagonal"></span>
+      <select id="diagonal"></select>
+    </label>
     <label class="group">
       <span data-i18n="toolbar.language"></span>
       <select id="language"></select>
@@ -44,6 +68,29 @@
     <h2 id="palette-title" data-i18n="palette.title"></h2>
     <div id="terrain-list" class="terrain-list"></div>
   </nav>
+
+  <dialog id="token-dialog" aria-labelledby="token-dialog-title">
+    <form id="token-form" method="dialog">
+      <h2 id="token-dialog-title" data-i18n="tokenEdit.title"></h2>
+      <label>
+        <span data-i18n="toolbar.side"></span>
+        <select id="edit-side"></select>
+      </label>
+      <label>
+        <span data-i18n="toolbar.tokenSize"></span>
+        <select id="edit-size"></select>
+      </label>
+      <label>
+        <span data-i18n="toolbar.tokenName"></span>
+        <input id="edit-name" type="text" maxlength="40" autocomplete="off">
+      </label>
+      <div class="dialog-buttons">
+        <!-- Save comes first: Enter in a field presses the first submit button. -->
+        <button type="submit" value="save" data-i18n="tokenEdit.save"></button>
+        <button type="submit" value="cancel" data-i18n="tokenEdit.cancel"></button>
+      </div>
+    </form>
+  </dialog>
 
   <div id="notice" class="notice" role="status" hidden>
     <span id="notice-text"></span>

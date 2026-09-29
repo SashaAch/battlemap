@@ -13,9 +13,12 @@
   --ui-focus: #2f6fdb;
   --ui-notice-bg: #fff4d6;
   --ui-notice-fg: #3d2e00;
+  --ui-backdrop: rgba(20, 24, 30, 0.35);
   --board-void: #f7f8f9;
   --board-grid: rgba(40, 50, 60, 0.28);
   --board-cursor: #d6336c;
+  --board-label-bg: rgba(255, 255, 255, 0.92);
+  --board-label-fg: #1d1f22;
 }
 
 :root[data-theme="dark"] {
@@ -30,9 +33,12 @@
   --ui-focus: #5b9cff;
   --ui-notice-bg: #3a3016;
   --ui-notice-fg: #ffe7a6;
+  --ui-backdrop: rgba(0, 0, 0, 0.55);
   --board-void: #121417;
   --board-grid: rgba(220, 230, 240, 0.18);
   --board-cursor: #ff6b9a;
+  --board-label-bg: rgba(20, 22, 26, 0.9);
+  --board-label-fg: #f2f4f6;
 }
 
 :root[data-theme="parchment"] {
@@ -47,9 +53,12 @@
   --ui-focus: #8b3a1e;
   --ui-notice-bg: #fff3cf;
   --ui-notice-fg: #3b2a17;
+  --ui-backdrop: rgba(59, 42, 23, 0.35);
   --board-void: #efe2c2;
   --board-grid: rgba(80, 55, 25, 0.3);
   --board-cursor: #a4161a;
+  --board-label-bg: rgba(250, 242, 222, 0.94);
+  --board-label-fg: #3b2a17;
 }
 
 :root[data-theme="dungeon"] {
@@ -64,9 +73,12 @@
   --ui-focus: #e0a050;
   --ui-notice-bg: #3b2c1a;
   --ui-notice-fg: #f5deb3;
+  --ui-backdrop: rgba(0, 0, 0, 0.55);
   --board-void: #17120f;
   --board-grid: rgba(235, 200, 150, 0.18);
   --board-cursor: #ffb347;
+  --board-label-bg: rgba(26, 20, 16, 0.9);
+  --board-label-fg: #f5e6cf;
 }
 
 :root[data-theme="contrast"] {
@@ -81,7 +93,10 @@
   --ui-focus: #00e5ff;
   --ui-notice-bg: #000000;
   --ui-notice-fg: #ffd400;
+  --ui-backdrop: rgba(0, 0, 0, 0.7);
   --board-void: #000000;
   --board-grid: rgba(255, 255, 255, 0.6);
   --board-cursor: #00e5ff;
+  --board-label-bg: #000000;
+  --board-label-fg: #ffffff;
 }
