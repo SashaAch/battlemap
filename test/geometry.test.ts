@@ -221,23 +221,49 @@ describe("outline", () => {
     assert.deepEqual(keysOf(outlineCells([...LOOP_3X3].reverse())), keysOf(outlineCells(LOOP_3X3)));
   });
 
-  test("a figure eight does not fail: an uneven one takes both loops, an even one is a click", () => {
-    // Two loops crossing near 3.4,2.3, the left one larger, so their areas do not cancel out.
-    const uneven = outlineCells([
-      { x: 0, y: 0 },
-      { x: 6, y: 4 },
-      { x: 6, y: 1 },
-      { x: 0, y: 4 },
-    ]);
-    const keys = keysOf(uneven);
+  test("an uneven figure eight takes the cells of both loops", () => {
+    // Two loops crossing near 3.4,2.3, the left one larger.
+    const keys = keysOf(
+      outlineCells([
+        { x: 0, y: 0 },
+        { x: 6, y: 4 },
+        { x: 6, y: 1 },
+        { x: 0, y: 4 },
+      ]),
+    );
     assert.ok(keys.includes("0,1") && keys.includes("5,2"), keys.join(" "));
     assert.ok(!keys.includes("3,0") && !keys.includes("3,3"));
+  });
+
+  test("an even figure eight takes the cells of both loops too: their areas do not cancel out", () => {
+    const bowTie = keysOf(
+      outlineCells([
+        { x: 0, y: 0 },
+        { x: 4, y: 4 },
+        { x: 4, y: 0 },
+        { x: 0, y: 4 },
+      ]),
+    );
+    assert.deepEqual(bowTie, ["0,1", "0,2", "3,1", "3,2"]);
 
     const lemniscate = Array.from({ length: 64 }, (_, i) => {
       const t = (i / 64) * 2 * Math.PI;
       return { x: 3 * Math.sin(t), y: 3 * Math.sin(t) * Math.cos(t) };
     });
-    assert.equal(outlineCells(lemniscate).length, 1);
+    const keys = keysOf(outlineCells(lemniscate));
+    assert.ok(keys.includes("2,0") && keys.includes("-3,-1"), keys.join(" "));
+  });
+
+  test("a thin sliver through several cell centres is a click", () => {
+    // 5.6 × 0.05 cells: about 0.28 of a cell in area, yet the centres of six cells lie inside.
+    const sliver = [
+      { x: 0.2, y: 0.525 },
+      { x: 0.2, y: 0.475 },
+      { x: 5.8, y: 0.475 },
+      { x: 5.8, y: 0.525 },
+      { x: 3.5, y: 0.525 },
+    ];
+    assert.deepEqual(outlineCells(sliver), [{ x: 3, y: 0 }]);
   });
 
   test("an outline of less than half a cell is a click on the cell under the last point", () => {

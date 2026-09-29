@@ -19,18 +19,10 @@ import {
 } from "./geometry.ts";
 import type { Camera, Point } from "./geometry.ts";
 import type { BoardCursor } from "./render.ts";
-import {
-  applyToChange,
-  beginChange,
-  cancelChange,
-  edgesPatch,
-  enclosePatch,
-  erasePatch,
-  fillPatch,
-  finishChange,
-  roomPatch,
-} from "./store.ts";
-import type { EraseFilter, History, Patch, Scene } from "./store.ts";
+import { edgesPatch, enclosePatch, erasePatch, fillPatch, roomPatch } from "./edit.ts";
+import type { EraseFilter } from "./edit.ts";
+import { applyToChange, beginChange, cancelChange, finishChange } from "./store.ts";
+import type { History, Patch, Scene } from "./store.ts";
 
 export const BRUSH_SIZES = [1, 2, 3] as const;
 type BrushSize = (typeof BRUSH_SIZES)[number];
@@ -179,7 +171,7 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
   // Shift+click with walls: one change of its own, not a stroke.
   const enclose = (world: Point): void => {
     if (stroke) return;
-    const patch = enclosePatch(board.scene, cellAt(world));
+    const patch = enclosePatch(board.scene, cellAt(world), board.edgeType);
     if (patch === null) {
       hooks.enclosureTooBig();
       return;

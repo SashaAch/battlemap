@@ -135,8 +135,10 @@ export interface BoundaryEdge {
   inner: Point;
 }
 
-/** Outlines with a smaller area are taken for a click on the cell under the pointer. */
+/** Outlines with a smaller area inside are taken for a click on the cell under the pointer. */
 const CLICK_AREA = 0.5;
+/** Distance between the lines along which the area inside an outline is summed, in cells. */
+const AREA_STEP = 1 / 16;
 
 export function edgeKey(dir: EdgeDir, x: number, y: number): string {
   return `${dir}:${x + 0},${y + 0}`;
@@ -192,28 +194,42 @@ export function innerEdges(cells: readonly Point[]): string[] {
   return edges;
 }
 
-/** Signed area of a closed polygon (shoelace formula). */
-function polygonArea(points: readonly Point[]): number {
-  let twice = 0;
+/**
+ * x of every crossing of the closed outline with the horizontal line at `y`, sorted;
+ * a vertex on the line counts once. By the even-odd rule, the stretches between crossings 0-1, 2-3, … are inside.
+ */
+function crossingsAt(points: readonly Point[], y: number): number[] {
+  const crossings: number[] = [];
   for (let i = 0; i < points.length; i++) {
     const a = points[i];
     const b = points[(i + 1) % points.length];
-    twice += a.x * b.y - b.x * a.y;
+    if (a.y > y !== b.y > y) crossings.push(a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x));
   }
-  return twice / 2;
+  return crossings.sort((p, q) => p - q);
+}
+
+/**
+ * Whether the area inside the outline by the even-odd rule reaches `area`. The area is summed along
+ * horizontal lines AREA_STEP apart on a fixed grid, so the loops of a figure eight add up instead of
+ * cancelling out, and the sum stops as soon as it is enough.
+ */
+function evenOddAreaReaches(points: readonly Point[], minY: number, maxY: number, area: number): boolean {
+  let sum = 0;
+  for (let k = Math.floor(minY / AREA_STEP); (k + 0.5) * AREA_STEP < maxY; k++) {
+    const crossings = crossingsAt(points, (k + 0.5) * AREA_STEP);
+    for (let i = 0; i + 1 < crossings.length; i += 2) sum += (crossings[i + 1] - crossings[i]) * AREA_STEP;
+    if (sum >= area) return true;
+  }
+  return false;
 }
 
 /**
  * Cells whose centre lies inside the outline drawn through `points` and closed back to the first point,
- * by the even-odd rule. An outline of less than half a cell in area is a click: the cell under the last point.
- * Cells outside the key range are left out.
+ * by the even-odd rule. An outline with no cell inside or with less than half a cell of area inside
+ * is a click: the cell under the last point. Cells outside the key range are left out.
  */
 export function outlineCells(points: readonly Point[]): Point[] {
   if (points.length === 0) return [];
-  if (Math.abs(polygonArea(points)) < CLICK_AREA) {
-    const cell = cellAt(points[points.length - 1]);
-    return isCellInRange(cell.x, cell.y) ? [cell] : [];
-  }
   let minY = Infinity;
   let maxY = -Infinity;
   for (const p of points) {
@@ -222,15 +238,7 @@ export function outlineCells(points: readonly Point[]): Point[] {
   }
   const cells: Point[] = [];
   for (let y = Math.floor(minY); y < maxY; y++) {
-    const centreY = y + 0.5;
-    // x of every crossing of the outline with the centre line of the row; a vertex on the line counts once.
-    const crossings: number[] = [];
-    for (let i = 0; i < points.length; i++) {
-      const a = points[i];
-      const b = points[(i + 1) % points.length];
-      if (a.y > centreY !== b.y > centreY) crossings.push(a.x + ((centreY - a.y) / (b.y - a.y)) * (b.x - a.x));
-    }
-    crossings.sort((p, q) => p - q);
+    const crossings = crossingsAt(points, y + 0.5);
     for (let i = 0; i + 1 < crossings.length; i += 2) {
       // Cells whose centre x + 0.5 lies strictly between two crossings.
       for (let x = Math.ceil(crossings[i] - 0.5); x + 0.5 < crossings[i + 1]; x++) {
@@ -238,7 +246,9 @@ export function outlineCells(points: readonly Point[]): Point[] {
       }
     }
   }
-  return cells;
+  if (cells.length > 0 && evenOddAreaReaches(points, minY, maxY, CLICK_AREA)) return cells;
+  const cell = cellAt(points[points.length - 1]);
+  return isCellInRange(cell.x, cell.y) ? [cell] : [];
 }
 
 /** The grid vertex nearest to a world point. */

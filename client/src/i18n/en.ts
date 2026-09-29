@@ -24,7 +24,7 @@ export const en: Record<keyof typeof ru, string> = {
   "tool.room": "Room",
   "tool.roomHint": "Room (R): outline a room, floor inside and walls along the edge",
   "tool.walls": "Walls",
-  "tool.wallsHint": "Walls (W): draw along the grid lines; a click sets the nearest edge; Shift+click walls in an area of one terrain",
+  "tool.wallsHint": "Walls (W): draw along the grid lines; a click sets the nearest edge; Shift+click puts the selected type around an area of one terrain",
   "tool.eraser": "Eraser",
   "tool.eraserHint": "Eraser (E): erases what the filter selects under the brush",
 
@@ -74,5 +74,5 @@ export const en: Record<keyof typeof ru, string> = {
   "notice.draftNewer": "The draft was saved by a newer version of the app and was not opened here. It has been kept separately; an empty scene was opened.",
   "notice.draftUnkept": "The draft cannot be opened, and keeping a separate copy of it failed. To avoid overwriting it, changes to this scene are not saved.",
   "notice.storageFailed": "The browser does not allow saving data: the draft and settings are not kept.",
-  "notice.enclosureTooBig": "The area is larger than {limit} squares, no walls were placed around it. Draw them in parts with the Walls tool.",
+  "notice.enclosureTooBig": "The area is larger than {limit} squares, nothing was placed around it. Draw its border in parts with the Walls tool.",
 };
