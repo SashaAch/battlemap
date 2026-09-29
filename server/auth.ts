@@ -216,8 +216,8 @@ export class Accounts {
   }
 
   /**
-   * Registers with the setup token, with open registration, or else with a code: a registration code, or a game
-   * invite made by someone who is an administrator at this moment (R43), which also makes the user a player of
+   * Registers with the setup token, with open registration, or else with a code made by someone who is an active
+   * administrator at this moment (R43, R49): a registration code, or a game invite, which also makes the user a player of
    * its game and uses the invite once, in the same transaction as the account. Any other game invite, and a code
    * used up, answer as an unknown code (`auth.inviteInvalid`); an administrator's expired game invite is 410.
    * With open registration a code is not used: the user joins the game by its button later.
@@ -275,19 +275,21 @@ export class Accounts {
     return { user, token: this.#newSession(user, now), gameId };
   }
 
-  /** What a code gives a registration; throws for a code that gives nothing (see register). */
+  /**
+   * What a code gives a registration; throws for a code that gives nothing (see register). Any code, known or not,
+   * costs the same one read of the database (the invite with its creator), so the answer time gives nothing away.
+   */
   #grantOf(codeHash: Buffer, now: number): Grant {
     const invite = this.#db.findInvite(codeHash);
-    if (!invite) throw new ApiError("auth.inviteInvalid");
+    // A code works only while its creator is an active administrator (R43, R49); nothing tells the code of someone
+    // else from an unknown one, not even its expiry.
+    if (!invite || !invite.creatorIsAdmin) throw new ApiError("auth.inviteInvalid");
     if (invite.kind === "register") {
       if (invite.expiresAt <= now || invite.uses >= invite.maxUses) throw new ApiError("auth.inviteInvalid");
       return { codeHash, gameId: null };
     }
-    // Nothing tells the code of someone else from an unknown one, not even its expiry.
-    const creator = this.#db.findUserById(invite.createdBy);
-    if (!creator || creator.role !== "admin" || creator.disabled || invite.gameId === null) throw new ApiError("auth.inviteInvalid");
     // As when joining (stage 5): a used-up invite is like an unknown one, an expired one is 410.
-    if (invite.uses >= invite.maxUses) throw new ApiError("auth.inviteInvalid");
+    if (invite.gameId === null || invite.uses >= invite.maxUses) throw new ApiError("auth.inviteInvalid");
     if (invite.expiresAt <= now) throw new ApiError("invite.expired");
     return { codeHash, gameId: invite.gameId };
   }

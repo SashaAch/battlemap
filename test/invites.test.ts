@@ -14,7 +14,7 @@ import { startServer } from "../server/app.ts";
 import type { RunningServer } from "../server/app.ts";
 import { Accounts, DAY_MS, LIMIT_WINDOW_MS, MAX_REGISTRATIONS_PER_ADDRESS, sha256 } from "../server/auth.ts";
 import { Database } from "../server/db.ts";
-import { ERRORS } from "../server/errors.ts";
+import { ApiError, ERRORS } from "../server/errors.ts";
 import type { ErrorCode } from "../server/errors.ts";
 import { inviteLinks } from "../server/network.ts";
 import type { Interfaces } from "../server/network.ts";
@@ -239,21 +239,101 @@ describe("an administrator's game invite registers (R43)", () => {
   });
 });
 
+/**
+ * Accounts on a database of their own, with the administrator made, a game of theirs and a fast hasher (the logic,
+ * not scrypt, is under test). `beforeStore`, when set, runs while the next password is hashed: between the check
+ * of the code and the transaction that writes the account.
+ */
+async function directSite() {
+  const db = new Database(path.join(tempDir(), "battlemap.db"));
+  cleanups.push(async () => db.close());
+  const hooks: { beforeStore: (() => void) | null } = { beforeStore: null };
+  const hasher: PasswordHasher = {
+    async hash() {
+      const run = hooks.beforeStore;
+      hooks.beforeStore = null;
+      run?.();
+      return { passHash: new Uint8Array(32), passSalt: new Uint8Array(16), passParams: "test" };
+    },
+    matches: async () => true,
+  };
+  const now = Date.UTC(2026, 0, 1);
+  const accounts = new Accounts(db, () => now, hasher);
+  const { user: admin } = await accounts.register({ login: "admin", displayName: "A", password: "admin-password", setup: accounts.startSetup() ?? "" }, false, "127.0.0.1");
+  const game = db.insertGame("Склеп", "gm", admin.id, admin.id, now);
+  db.insertMember(game.id, admin.id, "gm", now);
+  const register = (login: string, code: string) => accounts.register({ login, displayName: "N", password: `${login}-password`, code }, false, "127.0.0.1");
+  return { db, accounts, hooks, admin, game, now, register };
+}
+
+describe("when invites and registration codes go out (R49)", () => {
+  test("handing mastery over puts out the game's invites: they register nobody and let nobody join", async () => {
+    const { site, users } = await siteWith("boss", "pat");
+    const { gameId } = await gameOf(site, users.admin);
+    const code = await invite(site, gameId, users.admin);
+    assert.equal((await call(site, "POST", `/api/join/${code}`, users.boss.cookie)).status, 200);
+    assert.equal((await call(site, "POST", `/api/games/${gameId}/master`, users.admin.cookie, { userId: users.boss.id })).status, 200);
+    const unknown = await register(site, "newbie", "abcdefghijkmnpqr");
+    assert.deepEqual(await register(site, "newbie", code), unknown);
+    // For someone with an account the old code is gone, as a code after removing a member (stage 5).
+    assertError(await call(site, "POST", `/api/join/${code}`, users.pat.cookie), "invite.notFound");
+    assert.deepEqual(await memberIds(site, gameId, users.boss), [users.admin.id, users.boss.id]);
+    // The new master makes invites of their own.
+    assert.equal((await call(site, "POST", `/api/join/${await invite(site, gameId, users.boss)}`, users.pat.cookie)).status, 200);
+  });
+
+  test("in a personal campaign both naming a master and taking mastery back put the invites out", async () => {
+    const { site, users } = await siteWith("pat", "kim");
+    const campaign = await call(site, "POST", "/api/games", users.admin.cookie, { title: "Моя", kind: "personal" });
+    const gameId: number = campaign.body.id;
+    const ownerCode = await invite(site, gameId, users.admin);
+    assert.equal((await call(site, "POST", `/api/join/${ownerCode}`, users.pat.cookie)).status, 200);
+    assert.equal((await call(site, "POST", `/api/games/${gameId}/master`, users.admin.cookie, { userId: users.pat.id })).status, 200);
+    assertError(await call(site, "POST", `/api/join/${ownerCode}`, users.kim.cookie), "invite.notFound");
+    const masterCode = await invite(site, gameId, users.pat);
+    assert.equal((await call(site, "DELETE", `/api/games/${gameId}/master`, users.admin.cookie)).status, 200);
+    assertError(await call(site, "POST", `/api/join/${masterCode}`, users.kim.cookie), "invite.notFound");
+  });
+
+  test("a registration code works only while its creator is an administrator and not disabled", async () => {
+    const { site, users } = await siteWith("boss");
+    const adminAction = (body: object) => call(site, "POST", "/api/admin/users", users.admin.cookie, body);
+    assert.equal((await adminAction({ action: "setRole", id: users.boss.id, role: "admin" })).status, 200);
+    const made = await call(site, "POST", "/api/admin/invites", users.boss.cookie, { maxUses: 5, days: 5 });
+    assert.equal(made.status, 201);
+    const unknown = await register(site, "newbie", "abcdefghijkmnpqr");
+
+    assert.equal((await adminAction({ action: "setRole", id: users.boss.id, role: "user" })).status, 200);
+    assert.deepEqual(await register(site, "newbie", made.body.code), unknown, "the creator lost the role");
+    assert.equal((await adminAction({ action: "setRole", id: users.boss.id, role: "admin" })).status, 200);
+    assert.equal((await adminAction({ action: "setDisabled", id: users.boss.id, disabled: true })).status, 200);
+    assert.deepEqual(await register(site, "newbie", made.body.code), unknown, "the creator is disabled");
+    assert.equal(await loginTaken(site, users.admin, "newbie"), false);
+
+    assert.equal((await adminAction({ action: "setDisabled", id: users.boss.id, disabled: false })).status, 200);
+    assert.equal((await register(site, "newbie", made.body.code)).status, 201);
+  });
+});
+
+describe("parallel registrations (R43)", () => {
+  test("by an invite of one entry: one succeeds, the others are refused; one account and one new member", async () => {
+    const { site, users } = await siteWith();
+    const { gameId } = await gameOf(site, users.admin);
+    const code = await invite(site, gameId, users.admin, 1);
+    const logins = ["racer_1", "racer_2", "racer_3", "racer_4", "racer_5"];
+    const replies = await Promise.all(logins.map((login) => register(site, login, code)));
+    assert.deepEqual(replies.map((reply) => reply.status).sort(), [201, 403, 403, 403, 403]);
+    for (const reply of replies.filter(({ status }) => status === 403)) assertError({ status: reply.status, body: reply.body }, "auth.inviteInvalid");
+    const accounts = (await call(site, "GET", "/api/admin/users", users.admin.cookie)).body.users as { login: string }[];
+    assert.equal(accounts.filter((user) => logins.includes(user.login)).length, 1);
+    const winner = replies.find(({ status }) => status === 201);
+    assert.deepEqual(await memberIds(site, gameId, users.admin), [users.admin.id, winner?.body.id]);
+  });
+});
+
 describe("a registration that fails midway (R43)", () => {
   test("a failure after the account and the membership are written leaves neither, and the invite unused", async () => {
-    const dir = tempDir();
-    const db = new Database(path.join(dir, "battlemap.db"));
-    cleanups.push(async () => db.close());
-    // A fast hasher: the rollback, not scrypt, is under test.
-    const hasher: PasswordHasher = {
-      hash: async () => ({ passHash: new Uint8Array(32), passSalt: new Uint8Array(16), passParams: "test" }),
-      matches: async () => true,
-    };
-    const now = Date.UTC(2026, 0, 1);
-    const accounts = new Accounts(db, () => now, hasher);
-    const { user: admin } = await accounts.register({ login: "admin", displayName: "A", password: "admin-password", setup: accounts.startSetup() ?? "" }, false, "127.0.0.1");
-    const game = db.insertGame("Склеп", "gm", admin.id, admin.id, now);
-    db.insertMember(game.id, admin.id, "gm", now);
+    const { db, admin, game, now, register } = await directSite();
     const code = "abcdefghijkmnpqr";
     db.insertInvite(sha256(code), "game", game.id, admin.id, now + DAY_MS, 1);
 
@@ -262,16 +342,38 @@ describe("a registration that fails midway (R43)", () => {
       insertMember(...args);
       throw new Error("the disk is full");
     };
-    await assert.rejects(accounts.register({ login: "newbie", displayName: "N", password: "newbie-password", code }, false, "127.0.0.1"), /disk is full/);
+    await assert.rejects(register("newbie", code), /disk is full/);
     assert.equal(db.findUserByLogin("newbie"), undefined);
     assert.deepEqual(db.listMembers(game.id).map((member) => member.userId), [admin.id]);
     assert.equal(db.findInvite(sha256(code))?.uses, 0);
 
     db.insertMember = insertMember;
-    const registered = await accounts.register({ login: "newbie", displayName: "N", password: "newbie-password", code }, false, "127.0.0.1");
+    const registered = await register("newbie", code);
     assert.equal(registered.gameId, game.id);
     assert.equal(db.findMemberRole(game.id, registered.user.id), "player");
   });
+
+  // R49: the creator's role is read again in the transaction, after the slow hashing of the password.
+  const changes: [string, (db: Database, id: number) => void][] = [
+    ["loses the role", (db, id) => db.setRole(id, "user")],
+    ["is disabled", (db, id) => db.setDisabled(id, true)],
+  ];
+  for (const [what, change] of changes) {
+    for (const kind of ["register", "game"] as const) {
+      test(`the creator of a ${kind === "register" ? "registration code" : "game invite"} who ${what} while the password is hashed lets nobody in`, async () => {
+        const { db, hooks, admin, game, now, register } = await directSite();
+        // A second administrator makes the code, so the first stays to check the result.
+        const boss = db.insertUser({ login: "boss", displayName: "B", passHash: new Uint8Array(32), passSalt: new Uint8Array(16), passParams: "test", role: "admin", mustChangePassword: false, createdAt: now });
+        const code = "abcdefghijkmnpqr";
+        db.insertInvite(sha256(code), kind, kind === "game" ? game.id : null, boss.id, now + DAY_MS, 5);
+        hooks.beforeStore = () => change(db, boss.id);
+        await assert.rejects(register("newbie", code), (error: ApiError) => error.code === "auth.inviteInvalid");
+        assert.equal(db.findUserByLogin("newbie"), undefined);
+        assert.equal(db.findInvite(sha256(code))?.uses, 0);
+        assert.deepEqual(db.listMembers(game.id).map((member) => member.userId), [admin.id]);
+      });
+    }
+  }
 });
 
 describe("links of an invite (plan 8.26)", () => {
@@ -316,8 +418,12 @@ describe("links of an invite (plan 8.26)", () => {
     for (const loopback of ["127.0.0.1:8080", "localhost:8080", "[::1]:8080", "LOCALHOST", undefined]) {
       assert.equal(links(undefined, loopback).length, 5, String(loopback));
     }
-    // A Host that is not a plain name or address with a port adds nothing.
-    assert.equal(links(undefined, "[::1]x.example").length, 5);
+    // A Host that is not a plain name or address with a port 1..65535 adds nothing.
+    for (const odd of ["[::1]x.example", "game.example:99999", "game.example:65536", "game.example:0", "game.example:00000"]) {
+      assert.equal(links(undefined, odd).length, 5, odd);
+    }
+    assert.deepEqual(links(undefined, "game.example:65535")[0], { url: "http://game.example:65535/#join=abc", adapter: null });
+    assert.deepEqual(links(undefined, "game.example:080")[0], { url: "http://game.example:80/#join=abc", adapter: null });
   });
 
   test("listening on one address: that address only, and nothing when it is loopback", () => {

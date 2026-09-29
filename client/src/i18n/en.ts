@@ -248,7 +248,7 @@ export const en: Record<keyof typeof ru, string> = {
   "game.online": "online",
   "game.streamLost": "No connection to the server, reconnecting…",
   "game.makeMaster": "Make master",
-  "game.confirmMakeMaster": "Make {name} the master? Only they will change scenes, invites and members.",
+  "game.confirmMakeMaster": "Make {name} the master? Only they will change scenes, invites and members. The current invites stop working, the new master makes their own.",
   "game.remove": "Remove",
   "game.confirmRemove": "Remove {name} from the game? All current invites stop working too; make a new one for the others.",
   "game.invite": "Invite",
@@ -271,7 +271,7 @@ export const en: Record<keyof typeof ru, string> = {
   "game.leave": "Leave the game",
   "game.confirmLeave": "Leave the game “{title}”? You can come back only with a new invite.",
   "game.takeMastery": "Take mastery back",
-  "game.confirmTakeMastery": "Take mastery back? The master becomes a player and you edit the scenes again.",
+  "game.confirmTakeMastery": "Take mastery back? The master becomes a player and you edit the scenes again. The current invites stop working.",
 
   "notice.gameGone": "The game is not available: it was deleted or you were removed from it.",
   "notice.changeRejected": "The server did not accept the change: {reason} The scene was read again from the server.",

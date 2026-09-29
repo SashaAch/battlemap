@@ -189,6 +189,8 @@ export interface Invite {
   /** The game of a game invite, null for a registration code. */
   gameId: number | null;
   createdBy: number;
+  /** The creator is an administrator and not disabled now (R43, R49). */
+  creatorIsAdmin: boolean;
   expiresAt: number;
   uses: number;
   maxUses: number;
@@ -431,14 +433,22 @@ export class Database {
     return changed === 1;
   }
 
-  /** An invite of either kind by the hash of its code, also when it has expired or has no uses left. */
+  /**
+   * An invite of either kind by the hash of its code, also when it has expired or has no uses left, with whether its
+   * creator is an active administrator: one read whatever the code is, so the time of a registration tells nothing.
+   */
   findInvite(codeHash: Uint8Array): Invite | undefined {
-    const row = this.#get("SELECT * FROM invites WHERE code_hash = ?", codeHash);
+    const row = this.#get(
+      `SELECT invites.*, users.role = 'admin' AND users.disabled = 0 AS creator_is_admin
+       FROM invites LEFT JOIN users ON users.id = invites.created_by WHERE invites.code_hash = ?`,
+      codeHash,
+    );
     return (
       row && {
         kind: row.kind === "game" ? "game" : "register",
         gameId: row.game_id === null ? null : Number(row.game_id),
         createdBy: Number(row.created_by),
+        creatorIsAdmin: row.creator_is_admin === 1,
         expiresAt: Number(row.expires_at),
         uses: Number(row.uses),
         maxUses: Number(row.max_uses),

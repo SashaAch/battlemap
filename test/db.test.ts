@@ -167,7 +167,7 @@ describe("queries", () => {
       const [fresh, stale] = [1, 2].map((n) => new Uint8Array(32).fill(n));
       db.insertInvite(fresh, "register", null, admin.id, 100, 2);
       db.insertInvite(stale, "register", null, admin.id, 10, 5);
-      assert.deepEqual(db.findInvite(fresh), { kind: "register", gameId: null, createdBy: admin.id, expiresAt: 100, uses: 0, maxUses: 2 });
+      assert.deepEqual(db.findInvite(fresh), { kind: "register", gameId: null, createdBy: admin.id, creatorIsAdmin: true, expiresAt: 100, uses: 0, maxUses: 2 });
       assert.equal(db.useInvite(fresh, "game", 50), false, "a code is used only as its own kind");
       assert.equal(db.useInvite(stale, "register", 50), false);
       assert.equal(db.useInvite(fresh, "register", 50), true);
@@ -205,7 +205,7 @@ describe("queries", () => {
     db = new Database(file);
     try {
       db.deleteExpired(50);
-      assert.deepEqual(db.findInvite(expired), { kind: "game", gameId: game.id, createdBy: admin.id, expiresAt: 10, uses: 0, maxUses: 5 });
+      assert.deepEqual(db.findInvite(expired), { kind: "game", gameId: game.id, createdBy: admin.id, creatorIsAdmin: true, expiresAt: 10, uses: 0, maxUses: 5 });
       assert.equal(db.findInvite(usedUp), undefined);
       assert.equal(db.findInvite(register), undefined, "an expired registration code goes as before");
       db.deleteGameInvites(game.id);

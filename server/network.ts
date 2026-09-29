@@ -100,10 +100,16 @@ export interface InviteLinkOptions {
   interfaces?: Interfaces;
 }
 
-/** The host and port of the page's Host header, or null when the header is not a plain name or address with a port. */
+/**
+ * The host and port of the page's Host header, or null when the header is not a plain name or address with an
+ * optional port 1..65535.
+ */
 function pageAddress(header: string | undefined): { host: string; port: string } | null {
   const match = /^(\[[0-9a-f:.]+\]|[a-z0-9.-]+?)\.?(?::(\d{1,5}))?$/.exec(header?.trim().toLowerCase() ?? "");
-  return match ? { host: match[1], port: match[2] ?? "" } : null;
+  if (!match) return null;
+  const port = match[2] === undefined ? "" : String(Number(match[2]));
+  if (port !== "" && (Number(port) < 1 || Number(port) > 65535)) return null;
+  return { host: match[1], port };
 }
 
 /**
@@ -127,12 +133,15 @@ export function inviteLinks(options: InviteLinkOptions): InviteLink[] {
   return [{ url: pageUrl, adapter: known?.adapter ?? null }, ...network.filter(({ url }) => url !== pageUrl)];
 }
 
-/** The host name of a Host header, lowercase, without the port; null when there is none. */
+/**
+ * The host name of a Host header, lowercase, without the port; null when there is none. After the brackets of an
+ * IPv6 address only a port may follow, so `[::1]x` is no name.
+ */
 export function hostName(header: string | undefined): string | null {
   if (!header) return null;
   const text = header.trim().toLowerCase();
-  const name = text.startsWith("[") ? text.slice(0, text.indexOf("]") + 1) : text.replace(/:\d*$/, "");
-  return name.replace(/\.$/, "") || null;
+  if (text.startsWith("[")) return /^(\[[^\]]*\])(?::\d*)?$/.exec(text)?.[1] ?? null;
+  return text.replace(/:\d*$/, "").replace(/\.$/, "") || null;
 }
 
 /**
