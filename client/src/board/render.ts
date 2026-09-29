@@ -1,8 +1,8 @@
-// Drawing the board on a canvas, bottom to top (plan 5.8): void, terrain, hatching of difficult terrain, grid,
-// objects, walls and openings, pencil marks, tokens, then what the tools show over it.
+// Drawing the board on a canvas, bottom to top (plan 5.8): void with its grid, terrain, hatching of difficult terrain,
+// the grid over terrain, objects, walls and openings, pencil marks, tokens, then what the tools show over it.
 
 import { EDGE_COLORS, sideColor, TERRAIN_BY_ID, TOKEN_COLORS } from "./catalog.ts";
-import type { MarkColor } from "./catalog.ts";
+import type { MarkColor, SideId } from "./catalog.ts";
 import { parseCellKey, parseEdgeKey, screenToWorld, worldToScreen } from "./geometry.ts";
 import type { Camera, CellSquare, GridEdge, Point } from "./geometry.ts";
 import { tokenLayout } from "./pieces.ts";
@@ -25,9 +25,10 @@ export type BoardOverlay =
   | { kind: "selected"; square: CellSquare }
   | { kind: "ping"; point: Point; label: string; age: number };
 
-/** Board interface colours taken from the current theme (themes.css). */
+/** Board interface colours taken from the current theme (themes.css); void and grid may be the user's own (R45). */
 export interface BoardColors {
   void: string;
+  /** The grid over the void; over terrain it is TERRAIN_GRID, the same in every theme. */
   grid: string;
   cursor: string;
   labelBack: string;
@@ -42,6 +43,20 @@ export interface Viewport {
 
 /** Hatch lines per cell, measured along the x axis. */
 const HATCH_PER_CELL = 4;
+
+/**
+ * The grid over terrain (plan 8.27 item 6): a dark line and a light one side by side, the same in every theme, so the
+ * cells read on a light floor and on dark water alike, inside buildings too.
+ */
+const TERRAIN_GRID = { dark: "rgba(0, 0, 0, 0.3)", light: "rgba(255, 255, 255, 0.22)" } as const;
+
+/** The frame of a token by its side (plan 8.27 item 4), in the side colour: solid, dashed or dotted. */
+export const SIDE_RINGS: Readonly<Record<SideId, "solid" | "dashed" | "dotted">> = {
+  players: "solid",
+  allies: "solid",
+  enemies: "dashed",
+  neutral: "dotted",
+};
 
 export function readBoardColors(): BoardColors {
   const style = getComputedStyle(document.documentElement);
@@ -88,7 +103,12 @@ export function drawBoard(
 
   ctx.fillStyle = colors.void;
   ctx.fillRect(0, 0, viewport.width, viewport.height);
+  ctx.strokeStyle = colors.grid;
+  drawVoidGrid(ctx, viewport, camera, topLeft, bottomRight);
 
+  /** The terrain cells in sight by row and by column: the grid over terrain goes along them. */
+  const byRow = new Map<number, number[]>();
+  const byColumn = new Map<number, number[]>();
   const hatched = new Map<string, Path2D>();
   for (const [key, terrainId] of Object.entries(scene.cells)) {
     const cell = parseCellKey(key);
@@ -98,6 +118,8 @@ export function drawBoard(
     const [x, y, w, h] = cellRect(camera, cell.x, cell.y, 1);
     ctx.fillStyle = terrain.color;
     ctx.fillRect(x, y, w, h);
+    append(byRow, cell.y, cell.x);
+    append(byColumn, cell.x, cell.y);
     if (terrain.hatch) {
       let path = hatched.get(terrain.hatch);
       if (!path) hatched.set(terrain.hatch, (path = new Path2D()));
@@ -106,7 +128,12 @@ export function drawBoard(
   }
   for (const [color, area] of hatched) drawHatch(ctx, camera, topLeft, bottomRight, color, area);
 
-  drawGrid(ctx, viewport, camera, topLeft, bottomRight, colors.grid);
+  const lines = terrainGridLines(camera, byRow, byColumn);
+  ctx.fillStyle = TERRAIN_GRID.dark;
+  ctx.fill(linesPath(lines, 0));
+  ctx.fillStyle = TERRAIN_GRID.light;
+  ctx.fill(linesPath(lines, 1));
+
   drawObjects(ctx, scene, camera, topLeft, bottomRight);
   drawEdges(ctx, scene, camera, topLeft, bottomRight);
   for (const mark of Object.values(scene.marks)) {
@@ -151,28 +178,67 @@ function drawMarkLine(ctx: CanvasRenderingContext2D, camera: Camera, color: stri
   ctx.restore();
 }
 
-// Tokens: a disc of the side colour in the space; the name under it on a dark plate when the token is large enough on screen.
+// Tokens (plan 8.27 item 4, the "ring" of the variant V mock-up): a dark disc in the space with a frame of the side
+// colour, solid, dashed or dotted by side, so sides differ without telling colours apart; the first letter of the name
+// in the disc, and the name under it on a dark plate when the token is large enough on screen.
 const TOKEN_INSET = 0.06;
-const TOKEN_OUTLINE = 0.05;
+/** Frame width in cells, with a floor in pixels, so it shows at any scale. */
+const TOKEN_RING = 0.09;
+const TOKEN_RING_MIN_PX = 2;
+const INITIAL_MIN_PX = 16;
+const INITIAL_FONT = 0.36;
 const NAME_MIN_PX = 28;
 const NAME_FONT = 0.28;
 
+/** Dashes or dots that go evenly round a circle of `length` pixels with a frame `width` pixels wide. */
+function ringDash(style: "solid" | "dashed" | "dotted", length: number, width: number): number[] {
+  if (style === "solid") return [];
+  if (style === "dashed") {
+    const period = length / Math.max(4, Math.round(length / (3.6 * width)));
+    return [period * 0.6, period * 0.4];
+  }
+  // Dots: dashes of no length with round caps, one frame width across.
+  return [0, length / Math.max(6, Math.round(length / (2.2 * width)))];
+}
+
 function drawTokens(ctx: CanvasRenderingContext2D, scene: Scene, camera: Camera, topLeft: Point, bottomRight: Point): void {
   ctx.save();
+  const ring = Math.max(TOKEN_RING_MIN_PX, camera.scale * TOKEN_RING);
   for (const { token, square } of tokenLayout(scene)) {
     if (!isSquareVisible(square, topLeft, bottomRight)) continue;
     const px = square.size * camera.scale;
     const center = worldToScreen(camera, { x: square.x + square.size / 2, y: square.y + square.size / 2 });
+    const radius = px * (0.5 - TOKEN_INSET);
     ctx.beginPath();
-    ctx.arc(center.x, center.y, px * (0.5 - TOKEN_INSET), 0, 2 * Math.PI);
-    ctx.fillStyle = sideColor(token.side);
+    ctx.arc(center.x, center.y, radius, 0, 2 * Math.PI);
+    ctx.fillStyle = TOKEN_COLORS.outline;
     ctx.fill();
-    ctx.lineWidth = Math.max(1.5, Math.min(px, camera.scale) * TOKEN_OUTLINE);
-    ctx.strokeStyle = TOKEN_COLORS.outline;
+    // The frame lies inside the disc: its gaps show the dark disc, which reads over any terrain.
+    const width = Math.min(ring, radius);
+    const ringRadius = radius - width / 2;
+    const style = SIDE_RINGS[token.side];
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, ringRadius, 0, 2 * Math.PI);
+    ctx.lineWidth = width;
+    ctx.lineCap = style === "dotted" ? "round" : "butt";
+    ctx.setLineDash(ringDash(style, 2 * Math.PI * ringRadius, width));
+    ctx.strokeStyle = sideColor(token.side);
     ctx.stroke();
+    ctx.setLineDash([]);
+    if (token.name !== "" && px >= INITIAL_MIN_PX) drawInitial(ctx, token.name, center, px);
     if (token.name !== "" && px >= NAME_MIN_PX) drawName(ctx, token.name, center.x, center.y + px * 0.5, camera.scale);
   }
   ctx.restore();
+}
+
+/** The first letter of a token name (user text, drawn as canvas text only). */
+function drawInitial(ctx: CanvasRenderingContext2D, name: string, center: Point, px: number): void {
+  const [first = ""] = name;
+  ctx.font = `600 ${Math.round(px * INITIAL_FONT)}px system-ui, sans-serif`;
+  ctx.fillStyle = TOKEN_COLORS.label;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(first, center.x, center.y);
 }
 
 /** A token name, user text, is drawn as canvas text only; long names are cut with an ellipsis. */
@@ -446,15 +512,14 @@ function drawHatch(
   ctx.restore();
 }
 
-function drawGrid(
-  ctx: CanvasRenderingContext2D,
-  viewport: Viewport,
-  camera: Camera,
-  topLeft: Point,
-  bottomRight: Point,
-  color: string,
-): void {
-  ctx.strokeStyle = color;
+// Grid lines are one pixel wide, at the pixel where each cell begins as cellRect rounds it. Each colour is one path
+// drawn once: where lines cross, a see-through colour does not get darker.
+
+/**
+ * The grid over the void: lines across the whole viewport; terrain drawn after it covers them. One stroke, as before
+ * stage 27: filling a rectangle per line over the whole viewport took a quarter more time per frame.
+ */
+function drawVoidGrid(ctx: CanvasRenderingContext2D, viewport: Viewport, camera: Camera, topLeft: Point, bottomRight: Point): void {
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let x = Math.ceil(topLeft.x); x <= bottomRight.x; x++) {
@@ -468,4 +533,55 @@ function drawGrid(
     ctx.lineTo(viewport.width, sy);
   }
   ctx.stroke();
+}
+
+function append(map: Map<number, number[]>, key: number, value: number): void {
+  const list = map.get(key);
+  if (list) list.push(value);
+  else map.set(key, [value]);
+}
+
+/** Runs of neighbouring whole numbers in `values` (sorted in place), as [first, last]. */
+function runs(values: number[]): [number, number][] {
+  values.sort((a, b) => a - b);
+  const found: [number, number][] = [];
+  for (const value of values) {
+    const last = found[found.length - 1];
+    if (last && value === last[1] + 1) last[1] = value;
+    else found.push([value, value]);
+  }
+  return found;
+}
+
+type ScreenRect = [x: number, y: number, width: number, height: number];
+
+/**
+ * The grid over terrain: a line along the top of each run of terrain cells in a row and along the left of each run in
+ * a column. One rectangle per run, not per cell, keeps the frame fast. The lines at the far edge of the terrain are
+ * the void's: its grid shows there.
+ */
+function terrainGridLines(camera: Camera, byRow: Map<number, number[]>, byColumn: Map<number, number[]>): ScreenRect[] {
+  const lines: ScreenRect[] = [];
+  for (const [y, columns] of byRow) {
+    for (const [first, last] of runs(columns)) {
+      const [left, top] = cellRect(camera, first, y, 1);
+      const [end] = cellRect(camera, last + 1, y, 1);
+      lines.push([left, top, end - left, 1]);
+    }
+  }
+  for (const [x, rows] of byColumn) {
+    for (const [first, last] of runs(rows)) {
+      const [left, top] = cellRect(camera, x, first, 1);
+      const [, end] = cellRect(camera, x, last + 1, 1);
+      lines.push([left, top, 1, end - top]);
+    }
+  }
+  return lines;
+}
+
+/** The lines `shift` pixels right of and below where they are. */
+function linesPath(lines: readonly ScreenRect[], shift: number): Path2D {
+  const path = new Path2D();
+  for (const [x, y, width, height] of lines) path.rect(x + shift, y + shift, width, height);
+  return path;
 }

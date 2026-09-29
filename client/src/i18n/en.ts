@@ -4,18 +4,26 @@ import type { ru } from "./ru.ts";
 
 export const en: Record<keyof typeof ru, string> = {
   "app.title": "battlemap: board",
+  "app.name": "battlemap",
 
   "toolbar.undo": "Undo",
-  "toolbar.undoHint": "Undo (Ctrl+Z)",
   "toolbar.redo": "Redo",
-  "toolbar.redoHint": "Redo (Ctrl+Shift+Z or Ctrl+Y)",
-  "toolbar.tool": "Tool",
   "toolbar.size": "Size",
   "toolbar.sizeHint": "Brush and eraser size in squares, keys [ and ]",
   "toolbar.edgeType": "Type",
   "toolbar.eraseFilter": "Erase",
   "toolbar.language": "Language",
   "toolbar.theme": "Theme",
+
+  "rail.label": "Tools",
+  "rail.expand": "Expand",
+  "rail.collapse": "Collapse",
+
+  "menu.open": "Menu",
+  "menu.themeSettings": "Theme settings",
+  "menu.voidColor": "Background colour",
+  "menu.gridColor": "Grid colour",
+  "menu.themeDefault": "As in the theme",
 
   "tool.brush": "Brush",
   "tool.brushHint": "Brush (B): paints squares with the selected terrain",
@@ -137,6 +145,7 @@ export const en: Record<keyof typeof ru, string> = {
 
   "status.cell": "Square {x}, {y}",
   "status.scale": "1 square = 5 ft",
+  "status.zoom": "{percent}%",
   "status.measure": "Round trips: {count}, median {median} ms, worst {worst} ms",
 
   "notice.close": "Close",
@@ -148,7 +157,7 @@ export const en: Record<keyof typeof ru, string> = {
 
   "notice.serverUnreachable": "The server does not answer. Check the connection and try again.",
   "notice.requestFailed": "The server did not do that. Try again.",
-  "notice.settingsNotSaved": "Language and theme were not saved in your account; they apply on this device only.",
+  "notice.settingsNotSaved": "Settings were not saved in your account; they apply on this device only.",
   "notice.passwordChanged": "Password changed.",
 
   "common.cancel": "Cancel",
@@ -251,7 +260,8 @@ export const en: Record<keyof typeof ru, string> = {
   "game.confirmMakeMaster": "Make {name} the master? Only they will change scenes, invites and members. The current invites stop working, the new master makes their own.",
   "game.remove": "Remove",
   "game.confirmRemove": "Remove {name} from the game? All current invites stop working too; make a new one for the others.",
-  "game.invite": "Invite",
+  "game.inviteOpen": "Invite",
+  "game.inviteTitle": "Invite to the game",
   "game.inviteUses": "Number of joins",
   "game.inviteDays": "Valid for days",
   "game.createInvite": "Create invite",

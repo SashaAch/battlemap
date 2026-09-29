@@ -1,13 +1,15 @@
 // The account part of the page (plan 5.3, 8.4): the mode at start-up, the sign-in, registration and password
-// screens, and the account controls in the toolbar. User text (names, logins) goes only through textContent.
+// screens, and the account part of the menu. User text (names, logins) goes only through textContent.
 
 import { isKey, t } from "../i18n/index.ts";
 import type { Key } from "../i18n/index.ts";
+import { icon } from "../ui/icons.ts";
+import type { IconName } from "../ui/icons.ts";
 import { ApiFailure, detectMode, request } from "./api.ts";
-import type { AccountSettings, Me, Registered } from "./api.ts";
+import type { AccountSettings, Me, Registered, SettingsChange } from "./api.ts";
 
 export interface AccountHooks {
-  /** Applies the language and theme kept in the account. */
+  /** Applies the settings kept in the account: language, theme, own colours, the tool column. */
   applySettings(settings: AccountSettings): void;
   showNotice(key: Key): void;
   /** Fills `screen` with the administration screen (admin.ts). */
@@ -31,8 +33,8 @@ export interface ScreenActions {
 }
 
 export interface Account {
-  /** Keeps a language or theme change in the account; does nothing without a signed-in user. */
-  saveSettings(change: AccountSettings): void;
+  /** Keeps a settings change in the account; does nothing without a signed-in user. */
+  saveSettings(change: SettingsChange): void;
   /** A failed request outside a form: an ended session goes back to sign-in, anything else is a notice. */
   failed(error: unknown): void;
   showGames(): void;
@@ -56,6 +58,25 @@ export function setKey(element: HTMLElement, key: Key): void {
 export function button(key: Key, onPress: () => void, className = ""): HTMLButtonElement {
   const element = labelled("button", key, className);
   element.type = "button";
+  element.addEventListener("click", onPress);
+  return element;
+}
+
+/** Names `element` for screen readers and in its hint by the dictionary string `key`, kept up to date like setKey. */
+export function setLabel(element: HTMLElement, key: Key): void {
+  element.dataset.i18nAria = key;
+  element.dataset.i18nTitle = key;
+  element.setAttribute("aria-label", t(key));
+  element.title = t(key);
+}
+
+/** A button that shows only an icon; `key` names it. */
+export function iconButton(name: IconName, key: Key, onPress: () => void): HTMLButtonElement {
+  const element = document.createElement("button");
+  element.type = "button";
+  element.className = "icon-button";
+  setLabel(element, key);
+  element.append(icon(name, 18));
   element.addEventListener("click", onPress);
   return element;
 }
@@ -142,18 +163,19 @@ function takeSecretLink(): SecretLink | null {
 }
 
 export function startAccount(hooks: AccountHooks): Account {
-  const toolbar = document.querySelector<HTMLElement>(".toolbar");
-  if (!toolbar) throw new Error("the toolbar is missing");
+  const menu = document.getElementById("menu-account");
+  if (!menu) throw new Error("the account part of the menu is missing");
 
+  // A screen covers the board, its tools and the game panels; the top bar with the menu stays over it (R45).
   const screen = document.createElement("main");
   screen.className = "screen";
   screen.hidden = true;
   document.body.append(screen);
 
   const bar = document.createElement("div");
-  bar.className = "group account";
+  bar.className = "account";
   bar.hidden = true;
-  const name = document.createElement("span");
+  const name = document.createElement("strong");
   name.className = "account-name";
   const passwordButton = button("account.password", () => showPassword(false));
   const adminButton = button("account.admin", () => {
@@ -164,7 +186,7 @@ export function startAccount(hooks: AccountHooks): Account {
     request("POST", "api/auth/logout").then(restart, failed);
   });
   bar.append(name, gamesButton, passwordButton, adminButton, logoutButton);
-  toolbar.append(bar);
+  menu.append(bar);
 
   let me: Me | null = null;
   let openRegistration = false;
@@ -177,12 +199,14 @@ export function startAccount(hooks: AccountHooks): Account {
   function open(): HTMLElement {
     screen.replaceChildren();
     screen.hidden = false;
+    document.body.classList.add("screen-open");
     return screen;
   }
 
   function closeScreen(): void {
     screen.replaceChildren();
     screen.hidden = true;
+    document.body.classList.remove("screen-open");
   }
 
   function showGames(code: string): void {

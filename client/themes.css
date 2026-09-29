@@ -1,71 +1,93 @@
-/* Themes (plan 5.15): every variable is set in every theme. Terrain colours are not here:
-   they live in client/src/board/catalog.ts and are the same in all themes. The QR code of an invite
-   (--qr-dark, --qr-light) has the same colours in every theme, so a camera reads it in a dark one too. */
+/* Themes (plan 5.15, R23), drawn for the variant V layout (R45): every variable is set in every theme, and every
+   colour is #rrggbb or rgba(r, g, b, a) (theme.ts reads them). Terrain and side colours are not here: they live in
+   client/src/board/catalog.ts and are the same in all themes, as is the grid over terrain (board/render.ts).
+   The QR code of an invite (--qr-dark, --qr-light) has the same colours in every theme, so a camera reads it in a dark
+   one too. test/themes.test.ts checks the contrast of the text in every theme.
+
+   --ui-page     behind the screens without the board (sign-in, my games, administration)
+   --ui-bg       the floating panels, the menu, the windows and the cards
+   --ui-field    fields, lists and plain buttons on a panel
+   --ui-online   the dot of who is online (not text)
+   --ui-shadow   the shadow under the floating panels
+   --board-*     read by the canvas: the void around the map and its grid, the cursor, labels, pings */
 
 :root[data-theme="light"] {
   color-scheme: light;
+  --ui-page: #eceef1;
   --ui-bg: #ffffff;
+  --ui-field: #f2f4f6;
   --ui-fg: #1d1f22;
-  --ui-muted: #5d636b;
-  --ui-border: #c9ced4;
-  --ui-hover: #eef1f4;
+  --ui-muted: #585e66;
+  --ui-border: #d3d8de;
+  --ui-hover: #e6eaef;
   --ui-accent: #2f6fdb;
   --ui-accent-fg: #ffffff;
   --ui-focus: #2f6fdb;
   --ui-notice-bg: #fff4d6;
   --ui-notice-fg: #3d2e00;
   --ui-error: #b3261e;
+  --ui-online: #2e9e57;
+  --ui-shadow: rgba(20, 24, 30, 0.18);
   --ui-backdrop: rgba(20, 24, 30, 0.35);
-  --board-void: #f7f8f9;
-  --board-grid: rgba(40, 50, 60, 0.28);
+  --board-void: #f4f5f7;
+  --board-grid: rgba(40, 50, 60, 0.12);
   --board-cursor: #d6336c;
-  --board-label-bg: rgba(255, 255, 255, 0.92);
+  --board-label-bg: rgba(255, 255, 255, 0.94);
   --board-label-fg: #1d1f22;
   --board-ping: #f08c00;
   --qr-dark: #000000;
   --qr-light: #ffffff;
 }
 
+/* After the variant V mock-up (v-desktop.dc.html). */
 :root[data-theme="dark"] {
   color-scheme: dark;
-  --ui-bg: #1f2227;
-  --ui-fg: #e6e8eb;
-  --ui-muted: #a0a7b0;
-  --ui-border: #3a3f47;
-  --ui-hover: #2b3038;
-  --ui-accent: #5b9cff;
-  --ui-accent-fg: #0b1220;
-  --ui-focus: #5b9cff;
-  --ui-notice-bg: #3a3016;
-  --ui-notice-fg: #ffe7a6;
+  --ui-page: #0c0d10;
+  --ui-bg: #16181d;
+  --ui-field: #22252c;
+  --ui-fg: #ecebe8;
+  --ui-muted: #8d929b;
+  --ui-border: #2a2d35;
+  --ui-hover: #2d3038;
+  --ui-accent: #f2a93b;
+  --ui-accent-fg: #1a1204;
+  --ui-focus: #f2a93b;
+  --ui-notice-bg: #2b2417;
+  --ui-notice-fg: #f5deb3;
   --ui-error: #ff8a80;
-  --ui-backdrop: rgba(0, 0, 0, 0.55);
-  --board-void: #121417;
-  --board-grid: rgba(220, 230, 240, 0.18);
+  --ui-online: #57c27a;
+  --ui-shadow: rgba(0, 0, 0, 0.45);
+  --ui-backdrop: rgba(0, 0, 0, 0.6);
+  --board-void: #0c0d10;
+  --board-grid: rgba(255, 255, 255, 0.05);
   --board-cursor: #ff6b9a;
-  --board-label-bg: rgba(20, 22, 26, 0.9);
-  --board-label-fg: #f2f4f6;
-  --board-ping: #ffc034;
+  --board-label-bg: rgba(22, 24, 29, 0.92);
+  --board-label-fg: #ecebe8;
+  --board-ping: #f2a93b;
   --qr-dark: #000000;
   --qr-light: #ffffff;
 }
 
 :root[data-theme="parchment"] {
   color-scheme: light;
-  --ui-bg: #f6ecd4;
+  --ui-page: #eadcb9;
+  --ui-bg: #f8f0da;
+  --ui-field: #fdf8ea;
   --ui-fg: #3b2a17;
-  --ui-muted: #6e5a40;
-  --ui-border: #cdb68c;
-  --ui-hover: #ecdcb8;
+  --ui-muted: #6a5539;
+  --ui-border: #d3bf96;
+  --ui-hover: #efe1c0;
   --ui-accent: #8b3a1e;
   --ui-accent-fg: #fff8ea;
   --ui-focus: #8b3a1e;
   --ui-notice-bg: #fff3cf;
   --ui-notice-fg: #3b2a17;
   --ui-error: #9b1c1c;
+  --ui-online: #2e7d46;
+  --ui-shadow: rgba(59, 42, 23, 0.2);
   --ui-backdrop: rgba(59, 42, 23, 0.35);
   --board-void: #efe2c2;
-  --board-grid: rgba(80, 55, 25, 0.3);
+  --board-grid: rgba(80, 55, 25, 0.14);
   --board-cursor: #a4161a;
   --board-label-bg: rgba(250, 242, 222, 0.94);
   --board-label-fg: #3b2a17;
@@ -76,22 +98,26 @@
 
 :root[data-theme="dungeon"] {
   color-scheme: dark;
+  --ui-page: #140f0c;
   --ui-bg: #231c17;
+  --ui-field: #2f261f;
   --ui-fg: #eadfcf;
   --ui-muted: #b3a592;
   --ui-border: #4a3d31;
-  --ui-hover: #2f261f;
+  --ui-hover: #3a2f26;
   --ui-accent: #d08a3a;
   --ui-accent-fg: #1a130d;
   --ui-focus: #e0a050;
   --ui-notice-bg: #3b2c1a;
   --ui-notice-fg: #f5deb3;
   --ui-error: #ff9e80;
-  --ui-backdrop: rgba(0, 0, 0, 0.55);
+  --ui-online: #7bc47f;
+  --ui-shadow: rgba(0, 0, 0, 0.5);
+  --ui-backdrop: rgba(0, 0, 0, 0.6);
   --board-void: #17120f;
-  --board-grid: rgba(235, 200, 150, 0.18);
+  --board-grid: rgba(235, 200, 150, 0.08);
   --board-cursor: #ffb347;
-  --board-label-bg: rgba(26, 20, 16, 0.9);
+  --board-label-bg: rgba(26, 20, 16, 0.92);
   --board-label-fg: #f5e6cf;
   --board-ping: #4dabf7;
   --qr-dark: #000000;
@@ -100,7 +126,9 @@
 
 :root[data-theme="contrast"] {
   color-scheme: dark;
+  --ui-page: #000000;
   --ui-bg: #000000;
+  --ui-field: #000000;
   --ui-fg: #ffffff;
   --ui-muted: #ffffff;
   --ui-border: #ffffff;
@@ -111,9 +139,11 @@
   --ui-notice-bg: #000000;
   --ui-notice-fg: #ffd400;
   --ui-error: #ff6e6e;
-  --ui-backdrop: rgba(0, 0, 0, 0.7);
+  --ui-online: #00e676;
+  --ui-shadow: rgba(0, 0, 0, 0);
+  --ui-backdrop: rgba(0, 0, 0, 0.75);
   --board-void: #000000;
-  --board-grid: rgba(255, 255, 255, 0.6);
+  --board-grid: rgba(255, 255, 255, 0.35);
   --board-cursor: #00e5ff;
   --board-label-bg: #000000;
   --board-label-fg: #ffffff;

@@ -2,18 +2,26 @@
 
 export const ru = {
   "app.title": "battlemap: доска",
+  "app.name": "battlemap",
 
   "toolbar.undo": "Отменить",
-  "toolbar.undoHint": "Отменить (Ctrl+Z)",
   "toolbar.redo": "Повторить",
-  "toolbar.redoHint": "Повторить (Ctrl+Shift+Z или Ctrl+Y)",
-  "toolbar.tool": "Инструмент",
   "toolbar.size": "Размер",
   "toolbar.sizeHint": "Размер кисти и ластика в клетках, клавиши [ и ]",
   "toolbar.edgeType": "Тип",
   "toolbar.eraseFilter": "Стирать",
   "toolbar.language": "Язык",
   "toolbar.theme": "Тема",
+
+  "rail.label": "Инструменты",
+  "rail.expand": "Развернуть",
+  "rail.collapse": "Свернуть",
+
+  "menu.open": "Меню",
+  "menu.themeSettings": "Настройки темы",
+  "menu.voidColor": "Цвет фона",
+  "menu.gridColor": "Цвет сетки",
+  "menu.themeDefault": "Как в теме",
 
   "tool.brush": "Кисть",
   "tool.brushHint": "Кисть (B): красит клетки выбранной местностью",
@@ -135,6 +143,7 @@ export const ru = {
 
   "status.cell": "Клетка {x}, {y}",
   "status.scale": "1 клетка = 5 фт",
+  "status.zoom": "{percent}%",
   "status.measure": "Замеров: {count}, туда и обратно: медиана {median} мс, худший {worst} мс",
 
   "notice.close": "Закрыть",
@@ -146,7 +155,7 @@ export const ru = {
 
   "notice.serverUnreachable": "Сервер не отвечает. Проверьте связь и попробуйте ещё раз.",
   "notice.requestFailed": "Сервер не выполнил действие. Попробуйте ещё раз.",
-  "notice.settingsNotSaved": "Язык и тема не сохранены в учётной записи, действуют только на этом устройстве.",
+  "notice.settingsNotSaved": "Настройки не сохранены в учётной записи, действуют только на этом устройстве.",
   "notice.passwordChanged": "Пароль изменён.",
 
   "common.cancel": "Отмена",
@@ -249,7 +258,8 @@ export const ru = {
   "game.confirmMakeMaster": "Сделать {name} мастером? Сцены, приглашения и участников будет менять только он. Действующие приглашения перестанут работать, новый мастер создаст свои.",
   "game.remove": "Убрать",
   "game.confirmRemove": "Убрать {name} из игры? Все действующие приглашения тоже перестанут работать, для остальных создайте новое.",
-  "game.invite": "Приглашение",
+  "game.inviteOpen": "Пригласить",
+  "game.inviteTitle": "Пригласить в игру",
   "game.inviteUses": "Сколько входов по коду",
   "game.inviteDays": "Сколько дней действует",
   "game.createInvite": "Создать приглашение",

@@ -5,10 +5,22 @@ import type { Patch, Scene } from "../board/store.ts";
 import type { LANGS } from "../i18n/index.ts";
 import type { THEME_CHOICES } from "../theme.ts";
 
+/** The settings kept in the account (server/auth.ts). */
 export interface AccountSettings {
   lang?: (typeof LANGS)[number];
   theme?: (typeof THEME_CHOICES)[number];
+  /** The user's own colours of the void and the grid over it, `#rrggbb` (R45). */
+  voidColor?: string;
+  gridColor?: string;
+  /** The tool column shows the names beside the icons (R45). */
+  toolsExpanded?: boolean;
 }
+
+/** A change of the settings; a colour set to null goes back to the theme's. */
+export type SettingsChange = Omit<AccountSettings, "voidColor" | "gridColor"> & {
+  voidColor?: string | null;
+  gridColor?: string | null;
+};
 
 export interface UserInfo {
   id: number;

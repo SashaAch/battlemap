@@ -5,7 +5,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 
 import { isLang } from "../client/src/i18n/index.ts";
 import type { LANGS } from "../client/src/i18n/index.ts";
-import { isThemeChoice } from "../client/src/theme.ts";
+import { isHexColor, isThemeChoice } from "../client/src/theme.ts";
 import type { THEME_CHOICES } from "../client/src/theme.ts";
 import type { Database, Role, Session, User } from "./db.ts";
 import { ApiError } from "./errors.ts";
@@ -93,7 +93,17 @@ export const newInviteCode = (): string => readableText(INVITE_CODE_LENGTH);
 export interface AccountSettings {
   lang?: (typeof LANGS)[number];
   theme?: (typeof THEME_CHOICES)[number];
+  /** The user's own colours of the void around the map and of the grid over it (R45), `#rrggbb` in lowercase. */
+  voidColor?: string;
+  gridColor?: string;
+  /** The tool column shows the names beside the icons (R45). */
+  toolsExpanded?: boolean;
 }
+
+type ColorKey = "voidColor" | "gridColor";
+
+/** A change of the settings; a colour set to null goes back to the theme's. */
+export type SettingsChange = Omit<AccountSettings, ColorKey> & { [K in ColorKey]?: string | null };
 
 function parseSettings(json: string): AccountSettings {
   let value: unknown;
@@ -106,18 +116,23 @@ function parseSettings(json: string): AccountSettings {
   const settings: AccountSettings = {};
   if ("lang" in value && isLang(value.lang)) settings.lang = value.lang;
   if ("theme" in value && isThemeChoice(value.theme)) settings.theme = value.theme;
+  if ("voidColor" in value && isHexColor(value.voidColor)) settings.voidColor = value.voidColor;
+  if ("gridColor" in value && isHexColor(value.gridColor)) settings.gridColor = value.gridColor;
+  if ("toolsExpanded" in value && typeof value.toolsExpanded === "boolean") settings.toolsExpanded = value.toolsExpanded;
   return settings;
 }
 
 /** Checks a settings change: only known keys with known values. */
-export function checkSettings(input: Record<string, unknown>): AccountSettings {
-  const settings: AccountSettings = {};
+export function checkSettings(input: Record<string, unknown>): SettingsChange {
+  const change: SettingsChange = {};
   for (const [key, value] of Object.entries(input)) {
-    if (key === "lang" && isLang(value)) settings.lang = value;
-    else if (key === "theme" && isThemeChoice(value)) settings.theme = value;
+    if (key === "lang" && isLang(value)) change.lang = value;
+    else if (key === "theme" && isThemeChoice(value)) change.theme = value;
+    else if ((key === "voidColor" || key === "gridColor") && (value === null || isHexColor(value))) change[key] = value?.toLowerCase() ?? null;
+    else if (key === "toolsExpanded" && typeof value === "boolean") change.toolsExpanded = value;
     else throw new ApiError("request.format");
   }
-  return settings;
+  return change;
 }
 
 // ---- what the API shows about a user ----
@@ -409,8 +424,13 @@ export class Accounts {
     });
   }
 
-  saveSettings(user: User, change: AccountSettings): AccountSettings {
-    const settings = { ...parseSettings(user.settingsJson), ...change };
+  saveSettings(user: User, change: SettingsChange): AccountSettings {
+    const { voidColor, gridColor, ...rest } = change;
+    const settings: AccountSettings = { ...parseSettings(user.settingsJson), ...rest };
+    for (const [key, value] of [["voidColor", voidColor], ["gridColor", gridColor]] as const) {
+      if (value === null) delete settings[key];
+      else if (value !== undefined) settings[key] = value;
+    }
     this.#db.setSettings(user.id, JSON.stringify(settings));
     return settings;
   }

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>battlemap</title>
+  <link rel="stylesheet" href="fonts/fonts.css">
   <link rel="stylesheet" href="themes.css">
   <link rel="stylesheet" href="style.css">
   <script src="dist/app.js" defer></script>
@@ -11,63 +12,108 @@
 <body>
   <canvas id="board"></canvas>
 
-  <header class="toolbar">
-    <button type="button" id="undo" data-i18n="toolbar.undo" data-i18n-title="toolbar.undoHint"></button>
-    <button type="button" id="redo" data-i18n="toolbar.redo" data-i18n-title="toolbar.redoHint"></button>
-    <div class="group" role="group" aria-labelledby="tools-label">
-      <span id="tools-label" data-i18n="toolbar.tool"></span>
-      <span id="tools" class="segmented"></span>
+  <!-- Variant V (R45): the map fills the window, the panels float over it. -->
+  <header class="topbar">
+    <div class="plate game-plate">
+      <button type="button" id="back" class="icon-button game-only" data-i18n-aria="account.games"></button>
+      <span class="logo" aria-hidden="true">bm</span>
+      <div class="plate-text">
+        <span class="brand" data-i18n="app.name"></span>
+        <strong id="game-title" class="game-title game-only"></strong>
+        <span id="scene-picker" class="scene-picker game-only"></span>
+      </div>
+    </div>
+    <div class="plate account-plate">
+      <span id="online" class="online-list game-only" hidden></span>
+      <button type="button" id="invite-open" class="primary with-icon game-only" data-i18n-aria="game.inviteOpen" hidden>
+        <span data-i18n="game.inviteOpen"></span>
+      </button>
+      <button type="button" id="menu-button" class="icon-button" aria-haspopup="true" aria-expanded="false" aria-controls="menu" data-i18n-aria="menu.open"></button>
+    </div>
+    <div id="menu" class="plate menu" hidden>
+      <label class="menu-field">
+        <span data-i18n="toolbar.language"></span>
+        <select id="language"></select>
+      </label>
+      <label class="menu-field">
+        <span data-i18n="toolbar.theme"></span>
+        <select id="theme"></select>
+      </label>
+      <fieldset class="menu-section">
+        <legend data-i18n="menu.themeSettings"></legend>
+        <div class="color-row">
+          <label for="void-color" data-i18n="menu.voidColor"></label>
+          <input type="color" id="void-color">
+          <button type="button" id="void-reset" data-i18n="menu.themeDefault"></button>
+        </div>
+        <div class="color-row">
+          <label for="grid-color" data-i18n="menu.gridColor"></label>
+          <input type="color" id="grid-color">
+          <button type="button" id="grid-reset" data-i18n="menu.themeDefault"></button>
+        </div>
+      </fieldset>
+      <div id="menu-account" class="menu-section"></div>
+    </div>
+  </header>
+
+  <nav id="tool-rail" class="tool-rail board-ui" data-i18n-aria="rail.label"></nav>
+
+  <div id="tool-strip" class="tool-strip board-ui" hidden>
+    <span id="strip-title" class="strip-title"></span>
+    <div id="terrain-group" class="group" role="group" data-i18n-aria="palette.title">
+      <span id="terrain-list" class="segmented swatches"></span>
     </div>
     <div id="size-group" class="group" role="group" aria-labelledby="size-label" data-i18n-title="toolbar.sizeHint">
-      <span id="size-label" data-i18n="toolbar.size"></span>
+      <span id="size-label" class="muted" data-i18n="toolbar.size"></span>
       <span id="brush-sizes" class="segmented"></span>
     </div>
     <div id="edge-group" class="group" role="group" aria-labelledby="edge-label">
-      <span id="edge-label" data-i18n="toolbar.edgeType"></span>
+      <span id="edge-label" class="muted" data-i18n="toolbar.edgeType"></span>
       <span id="edge-types" class="segmented"></span>
     </div>
     <div id="erase-group" class="group" role="group" aria-labelledby="erase-label">
-      <span id="erase-label" data-i18n="toolbar.eraseFilter"></span>
+      <span id="erase-label" class="muted" data-i18n="toolbar.eraseFilter"></span>
       <span id="erase-filters" class="segmented"></span>
     </div>
     <div id="object-group" class="group" role="group" aria-labelledby="object-label">
-      <span id="object-label" data-i18n="toolbar.object"></span>
+      <span id="object-label" class="muted" data-i18n="toolbar.object"></span>
       <span id="object-types" class="segmented icons"></span>
     </div>
     <div id="token-group" class="group" role="group">
-      <span id="side-label" data-i18n="toolbar.side"></span>
-      <span id="token-sides" class="segmented" role="group" aria-labelledby="side-label"></span>
+      <span id="token-sides" class="segmented" role="group" data-i18n-aria="toolbar.side"></span>
       <label class="group">
-        <span data-i18n="toolbar.tokenSize"></span>
+        <span class="muted" data-i18n="toolbar.tokenSize"></span>
         <select id="token-size"></select>
       </label>
       <label class="group">
-        <span data-i18n="toolbar.tokenName"></span>
-        <input id="token-name" type="text" maxlength="40" size="12" autocomplete="off">
+        <span class="muted" data-i18n="toolbar.tokenName"></span>
+        <input id="token-name" type="text" maxlength="40" size="10" autocomplete="off">
       </label>
     </div>
     <div id="mark-group" class="group" role="group" aria-labelledby="mark-label">
-      <span id="mark-label" data-i18n="toolbar.color"></span>
+      <span id="mark-label" class="muted" data-i18n="toolbar.color"></span>
       <span id="mark-colors" class="segmented"></span>
     </div>
-    <label class="group" data-i18n-title="toolbar.diagonalHint">
-      <span data-i18n="toolbar.diagonal"></span>
+    <label id="diagonal-group" class="group" data-i18n-title="toolbar.diagonalHint">
+      <span class="muted" data-i18n="toolbar.diagonal"></span>
       <select id="diagonal"></select>
     </label>
-    <label class="group">
-      <span data-i18n="toolbar.language"></span>
-      <select id="language"></select>
-    </label>
-    <label class="group">
-      <span data-i18n="toolbar.theme"></span>
-      <select id="theme"></select>
-    </label>
-  </header>
+  </div>
 
-  <nav class="palette" aria-labelledby="palette-title">
-    <h2 id="palette-title" data-i18n="palette.title"></h2>
-    <div id="terrain-list" class="terrain-list"></div>
-  </nav>
+  <footer class="status plate board-ui">
+    <span id="status-cell"></span>
+    <span class="status-scale" data-i18n="status.scale"></span>
+    <span id="status-zoom"></span>
+  </footer>
+
+  <!-- Messages stay in sight over the map and under the top bar: the lost connection, ?measure, notices. -->
+  <div id="messages" class="messages">
+    <p id="measure" class="plate measure" hidden></p>
+    <div id="notice" class="notice" role="status" hidden>
+      <span id="notice-text"></span>
+      <button type="button" id="notice-close" data-i18n="notice.close"></button>
+    </div>
+  </div>
 
   <dialog id="token-dialog" aria-labelledby="token-dialog-title">
     <form id="token-form" method="dialog">
@@ -86,21 +132,10 @@
       </label>
       <div class="dialog-buttons">
         <!-- Save comes first: Enter in a field presses the first submit button. -->
-        <button type="submit" value="save" data-i18n="tokenEdit.save"></button>
+        <button type="submit" value="save" class="primary" data-i18n="tokenEdit.save"></button>
         <button type="submit" value="cancel" data-i18n="tokenEdit.cancel"></button>
       </div>
     </form>
   </dialog>
-
-  <div id="notice" class="notice" role="status" hidden>
-    <span id="notice-text"></span>
-    <button type="button" id="notice-close" data-i18n="notice.close"></button>
-  </div>
-
-  <footer class="status">
-    <span id="status-cell"></span>
-    <span data-i18n="status.scale"></span>
-    <span id="status-measure" hidden></span>
-  </footer>
 </body>
 </html>

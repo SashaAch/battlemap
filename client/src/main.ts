@@ -1,21 +1,26 @@
-// Start-up: interface language, theme, draft in localStorage, toolbar with the tools, palette, status bar and the board;
-// then the account part (app/login.ts), which finds out whether a server is there (plan 5.3), and the games
-// (app/game.ts), which put a scene from the server on the board instead of the draft.
+// Start-up: interface language, theme and own colours, draft in localStorage, the panels of variant V over the board
+// (R45: tool column, settings strip of the tool, status plate, menu) and the board; then the account part
+// (app/login.ts), which finds out whether a server is there (plan 5.3), and the games (app/game.ts), which put a scene
+// from the server on the board instead of the draft.
 
 import { showAdmin } from "./app/admin.ts";
 import { forwardPatch } from "./app/api.ts";
-import type { AccountSettings } from "./app/api.ts";
+import type { AccountSettings, SettingsChange } from "./app/api.ts";
+import { startOwnColors } from "./app/colors.ts";
+import type { OwnColorsChange } from "./app/colors.ts";
 import { startGame } from "./app/game.ts";
 import type { BoardAccess, GameBoard } from "./app/game.ts";
 import type { RoundTripSummary } from "./app/measure.ts";
 import { showGames } from "./app/games.ts";
-import { startAccount } from "./app/login.ts";
+import { setKey, startAccount } from "./app/login.ts";
+import { startMenu } from "./app/menu.ts";
+import { buildRail } from "./app/rail.ts";
 import { EDGE_TYPES, isSideId, isSizeId, MARK_COLORS, OBJECT_TYPES, SIDES, SIZES, TERRAIN } from "./board/catalog.ts";
-import type { TerrainId } from "./board/catalog.ts";
+import type { SideId, TerrainId } from "./board/catalog.ts";
 import { cellAt, DEFAULT_SCALE, panBy } from "./board/geometry.ts";
 import type { Point } from "./board/geometry.ts";
 import { editTokenPatch } from "./board/pieces.ts";
-import { drawBoard, fitCanvas, readBoardColors } from "./board/render.ts";
+import { drawBoard, fitCanvas, readBoardColors, SIDE_RINGS } from "./board/render.ts";
 import type { BoardColors, BoardOverlay, Viewport } from "./board/render.ts";
 import { drawObjectSign } from "./board/signs.ts";
 import { ENCLOSE_LIMIT, ERASE_FILTERS } from "./board/edit.ts";
@@ -27,10 +32,13 @@ import { openDraft, saveDraft } from "./draft.ts";
 import type { DraftProblem, DraftStorage } from "./draft.ts";
 import { defaultLang, getLang, isKey, isLang, LANGS, setLang, t } from "./i18n/index.ts";
 import type { Key } from "./i18n/index.ts";
-import { isThemeChoice, startThemes, THEME_CHOICES } from "./theme.ts";
+import { isHexColor, isThemeChoice, startThemes, THEME_CHOICES } from "./theme.ts";
 
 const LANG_KEY = "battlemap.lang";
 const THEME_KEY = "battlemap.theme";
+const VOID_COLOR_KEY = "battlemap.voidColor";
+const GRID_COLOR_KEY = "battlemap.gridColor";
+const TOOLS_EXPANDED_KEY = "battlemap.toolsExpanded";
 const DRAFT_SAVE_DELAY_MS = 1000;
 /** Tools a read-only board keeps: looking around and measuring. */
 const READ_ONLY_TOOLS: readonly Tool[] = ["select", "ruler"];
@@ -79,9 +87,10 @@ function byId<T extends HTMLElement>(id: string, type: new () => T): T {
 }
 
 const canvas = byId("board", HTMLCanvasElement);
-const undoButton = byId("undo", HTMLButtonElement);
-const redoButton = byId("redo", HTMLButtonElement);
-const toolList = byId("tools", HTMLElement);
+const toolRail = byId("tool-rail", HTMLElement);
+const toolStrip = byId("tool-strip", HTMLElement);
+const stripTitle = byId("strip-title", HTMLElement);
+const terrainGroup = byId("terrain-group", HTMLElement);
 const sizeGroup = byId("size-group", HTMLElement);
 const brushSizes = byId("brush-sizes", HTMLElement);
 const edgeGroup = byId("edge-group", HTMLElement);
@@ -96,12 +105,15 @@ const tokenSize = byId("token-size", HTMLSelectElement);
 const tokenName = byId("token-name", HTMLInputElement);
 const markGroup = byId("mark-group", HTMLElement);
 const markColors = byId("mark-colors", HTMLElement);
+const diagonalGroup = byId("diagonal-group", HTMLElement);
 const diagonalSelect = byId("diagonal", HTMLSelectElement);
 const tokenDialog = byId("token-dialog", HTMLDialogElement);
 const tokenForm = byId("token-form", HTMLFormElement);
 const editSide = byId("edit-side", HTMLSelectElement);
 const editSize = byId("edit-size", HTMLSelectElement);
 const editName = byId("edit-name", HTMLInputElement);
+const menuButton = byId("menu-button", HTMLButtonElement);
+const menu = byId("menu", HTMLElement);
 const languageSelect = byId("language", HTMLSelectElement);
 const themeSelect = byId("theme", HTMLSelectElement);
 const terrainList = byId("terrain-list", HTMLElement);
@@ -109,7 +121,8 @@ const notice = byId("notice", HTMLElement);
 const noticeText = byId("notice-text", HTMLElement);
 const noticeClose = byId("notice-close", HTMLButtonElement);
 const statusCell = byId("status-cell", HTMLElement);
-const statusMeasure = byId("status-measure", HTMLElement);
+const statusZoom = byId("status-zoom", HTMLElement);
+const measureLine = byId("measure", HTMLElement);
 
 const context = canvas.getContext("2d");
 if (!context) throw new Error("canvas 2d context is unavailable");
@@ -133,6 +146,7 @@ function applyLanguage(): void {
   document.title = t("app.title");
   translateAttribute("data-i18n", (element, text) => (element.textContent = text));
   translateAttribute("data-i18n-title", (element, text) => (element.title = text));
+  translateAttribute("data-i18n-aria", (element, text) => element.setAttribute("aria-label", text));
   updateStatus();
   updateNotice();
   updateMeasure();
@@ -235,6 +249,7 @@ function redraw(): void {
     pings = pings.filter((ping) => now - ping.shownAt < PING_MS);
     const pingOverlays = pings.map(({ point, name, shownAt }): BoardOverlay => ({ kind: "ping", point, label: name, age: (now - shownAt) / PING_MS }));
     drawBoard(ctx, viewport, board.scene, board.camera, colors, [...tools.overlays(), ...pingOverlays]);
+    updateZoom();
     // A ping on the board keeps the frames coming until it is gone.
     if (pings.length > 0) redraw();
   });
@@ -243,6 +258,7 @@ function redraw(): void {
 new ResizeObserver(redraw).observe(canvas);
 
 function updateStatus(): void {
+  updateZoom();
   if (!board.hover) {
     statusCell.textContent = "";
     return;
@@ -251,18 +267,23 @@ function updateStatus(): void {
   statusCell.textContent = t("status.cell", { x: cell.x, y: cell.y });
 }
 
+function updateZoom(): void {
+  const text = t("status.zoom", { percent: Math.round((board.camera.scale / DEFAULT_SCALE) * 100) });
+  if (statusZoom.textContent !== text) statusZoom.textContent = text;
+}
+
 /** The times there and back with `?measure` in the address (app/measure.ts), null while there are none. */
 let measured: RoundTripSummary | null = null;
 
 function updateMeasure(): void {
-  statusMeasure.hidden = measured === null;
-  statusMeasure.textContent =
+  measureLine.hidden = measured === null;
+  measureLine.textContent =
     measured === null ? "" : t("status.measure", { count: measured.count, median: measured.median.toFixed(1), worst: measured.worst.toFixed(1) });
 }
 
 function updateHistoryButtons(): void {
-  undoButton.disabled = board.history.undo.length === 0;
-  redoButton.disabled = board.history.redo.length === 0;
+  rail.undoButton.disabled = board.history.undo.length === 0;
+  rail.redoButton.disabled = board.history.redo.length === 0;
 }
 
 const lastPatch = (list: readonly Patch[]): Patch => list[list.length - 1] ?? [];
@@ -301,10 +322,25 @@ function doRedo(): void {
   if (!player() && redo(board.scene, board.history)) sceneChanged(lastPatch(board.history.undo));
 }
 
-undoButton.addEventListener("click", doUndo);
-redoButton.addEventListener("click", doRedo);
+// ---- tool column and the settings strip of the tool (R45) ----
 
-// ---- toolbar and palette ----
+/** Whether the tool column shows the names; a signed-in user keeps it in the account too. */
+const storedExpanded = readSetting(TOOLS_EXPANDED_KEY) === "true";
+
+const rail = buildRail(toolRail, {
+  choose(tool) {
+    board.tool = tool;
+    updateTools();
+    redraw();
+  },
+  undo: doUndo,
+  redo: doRedo,
+  expandedChanged(expanded) {
+    writeSetting(TOOLS_EXPANDED_KEY, String(expanded));
+    account.saveSettings({ toolsExpanded: expanded });
+  },
+});
+rail.setExpanded(storedExpanded);
 
 function option(value: string, key: Key): HTMLOptionElement {
   const element = document.createElement("option");
@@ -340,18 +376,6 @@ function choiceButtons<T extends string>(
   };
 }
 
-const markTool = choiceButtons(
-  toolList,
-  TOOLS,
-  (tool) => `tool.${tool}`,
-  (tool) => `tool.${tool}Hint`,
-  (tool) => {
-    board.tool = tool;
-    updateTools();
-    redraw();
-  },
-);
-
 const markEdgeType = choiceButtons(edgeTypes, EDGE_TYPES, (type) => `edge.${type}`, null, (type) => {
   board.edgeType = type;
   markEdgeType(type);
@@ -362,22 +386,33 @@ const markEraseFilter = choiceButtons(eraseFilters, ERASE_FILTERS, (filter) => `
   markEraseFilter(filter);
 });
 
-// Each tool shows only its own options: size for the brush and the eraser, edge type for walls, filter for the eraser,
-// the symbol for objects, side, size and name for tokens, colour for the pencil.
+/**
+ * The settings strip shows only the options of the current tool: terrain for the brush, fill and room, size for the
+ * brush and the eraser, edge type for walls, filter for the eraser, the symbol for objects, side, size and name for
+ * tokens, colour for the pencil, the diagonal rule for the ruler. Select and ping have none, and a player or a
+ * read-only board changes none: then there is no strip.
+ */
+const TOOL_OPTIONS: readonly (readonly [HTMLElement, readonly Tool[]])[] = [
+  [terrainGroup, ["brush", "fill", "room"]],
+  [sizeGroup, ["brush", "eraser"]],
+  [edgeGroup, ["walls"]],
+  [eraseGroup, ["eraser"]],
+  [objectGroup, ["objects"]],
+  [tokenGroup, ["tokens"]],
+  [markGroup, ["pencil"]],
+  [diagonalGroup, ["ruler"]],
+];
+
 function updateTools(): void {
   const allowed = allowedTools();
   if (!allowed.includes(board.tool)) board.tool = "select";
-  TOOLS.forEach((tool, index) => {
-    const element = toolList.children[index];
-    if (element instanceof HTMLElement) element.hidden = !allowed.includes(tool);
-  });
-  markTool(board.tool);
-  sizeGroup.hidden = board.tool !== "brush" && board.tool !== "eraser";
-  edgeGroup.hidden = board.tool !== "walls";
-  eraseGroup.hidden = board.tool !== "eraser";
-  objectGroup.hidden = board.tool !== "objects";
-  tokenGroup.hidden = board.tool !== "tokens";
-  markGroup.hidden = board.tool !== "pencil";
+  rail.show(allowed, board.tool);
+  for (const [group, tools] of TOOL_OPTIONS) group.hidden = !tools.includes(board.tool);
+  toolStrip.hidden = readOnly() || player() || TOOL_OPTIONS.every(([group]) => group.hidden);
+  // The long hint of the tool (what it does, its keys) sits on its name in the strip.
+  setKey(stripTitle, `tool.${board.tool}`);
+  stripTitle.dataset.i18nTitle = `tool.${board.tool}Hint`;
+  stripTitle.title = t(`tool.${board.tool}Hint`);
 }
 
 const sizeButtons = BRUSH_SIZES.map((size) => {
@@ -402,7 +437,9 @@ const terrainButtons = TERRAIN.map((terrain) => {
     board.terrain = terrain.id;
     updateTerrainButtons();
   });
+  // A swatch only, the name is in the hint: the strip stays one line.
   button.dataset.i18nTitle = terrainKey(terrain.id);
+  button.dataset.i18nAria = terrainKey(terrain.id);
   // Terrain colours come from the catalog, not the theme: they are the same in every theme.
   const swatch = document.createElement("span");
   swatch.className = "swatch";
@@ -410,10 +447,7 @@ const terrainButtons = TERRAIN.map((terrain) => {
   if (terrain.hatch) {
     swatch.style.backgroundImage = `repeating-linear-gradient(45deg, ${terrain.hatch} 0 1.5px, transparent 1.5px 4.5px)`;
   }
-  const name = document.createElement("span");
-  name.className = "name";
-  name.dataset.i18n = terrainKey(terrain.id);
-  button.append(swatch, name);
+  button.append(swatch);
   terrainList.append(button);
   return { id: terrain.id, button };
 });
@@ -433,6 +467,7 @@ const objectButtons = OBJECT_TYPES.map((type) => {
     updateObjectButtons();
   });
   button.dataset.i18nTitle = `object.${type}`;
+  button.dataset.i18nAria = `object.${type}`;
   const icon = document.createElement("canvas");
   const ratio = window.devicePixelRatio || 1;
   icon.width = icon.height = Math.round(ICON_PX * ratio);
@@ -458,12 +493,23 @@ function swatchButton(color: string, onPress: () => void): HTMLButtonElement {
   return button;
 }
 
+/** A side shows its frame as the tokens have it on the board (render.ts): the colour and solid, dashed or dotted. */
+function sideMark(side: SideId, color: string): HTMLSpanElement {
+  const mark = document.createElement("span");
+  mark.className = `side-mark ${SIDE_RINGS[side]}`;
+  mark.style.borderColor = color;
+  return mark;
+}
+
 const sideButtons = SIDES.map((side) => {
-  const button = swatchButton(side.color, () => {
+  const button = toggleButton(() => {
     board.tokenDraft.side = side.id;
     updateSideButtons();
   });
-  button.dataset.i18nTitle = `side.${side.id}`;
+  button.className = "side-button";
+  const name = document.createElement("span");
+  name.dataset.i18n = `side.${side.id}`;
+  button.append(sideMark(side.id, side.color), name);
   tokenSides.append(button);
   return { id: side.id, button };
 });
@@ -492,6 +538,7 @@ const markColorButtons = MARK_COLORS.map((color) => {
     updateMarkColorButtons();
   });
   button.dataset.i18nTitle = `color.${color.id}`;
+  button.dataset.i18nAria = `color.${color.id}`;
   markColors.append(button);
   return { value: color.value, button };
 });
@@ -549,6 +596,37 @@ languageSelect.addEventListener("change", () => {
   account.saveSettings({ lang: languageSelect.value });
 });
 
+// The user's own colours of the void and the grid lie over the theme on the board only (R45).
+const storedColor = (key: string): string | null => {
+  const value = readSetting(key);
+  return isHexColor(value) ? value : null;
+};
+
+function saveOwnColors(change: OwnColorsChange): void {
+  if (change.voidColor !== undefined) writeSetting(VOID_COLOR_KEY, change.voidColor ?? "");
+  if (change.gridColor !== undefined) writeSetting(GRID_COLOR_KEY, change.gridColor ?? "");
+}
+
+const ownColors = startOwnColors(
+  {
+    voidInput: byId("void-color", HTMLInputElement),
+    voidReset: byId("void-reset", HTMLButtonElement),
+    gridInput: byId("grid-color", HTMLInputElement),
+    gridReset: byId("grid-reset", HTMLButtonElement),
+  },
+  { void: storedColor(VOID_COLOR_KEY), grid: storedColor(GRID_COLOR_KEY) },
+  {
+    changed() {
+      colors = ownColors.boardColors(readBoardColors());
+      redraw();
+    },
+    save(change) {
+      saveOwnColors(change);
+      account.saveSettings(change);
+    },
+  },
+);
+
 const storedTheme = readSetting(THEME_KEY);
 const initialTheme = isThemeChoice(storedTheme) ? storedTheme : "system";
 for (const choice of THEME_CHOICES) themeSelect.append(option(choice, `theme.${choice}`));
@@ -558,7 +636,9 @@ const setTheme = startThemes(
   window.matchMedia("(prefers-color-scheme: dark)"),
   initialTheme,
   () => {
-    colors = readBoardColors();
+    const theme = readBoardColors();
+    ownColors.showTheme(theme);
+    colors = ownColors.boardColors(theme);
     redraw();
   },
 );
@@ -568,6 +648,8 @@ themeSelect.addEventListener("change", () => {
   setTheme(themeSelect.value);
   account.saveSettings({ theme: themeSelect.value });
 });
+
+startMenu(menuButton, menu, byId("menu-account", HTMLElement));
 
 const tools = attachTools(canvas, board, {
   redraw,
@@ -594,7 +676,7 @@ updateHistoryButtons();
 applyLanguage();
 redraw();
 
-// ---- account: a signed-in user's language and theme come from the account (plan 5.15) ----
+// ---- account: a signed-in user's settings come from the account (plan 5.15, R45); what it lacks stays as it is ----
 
 function applyAccountSettings(settings: AccountSettings): void {
   if (settings.lang && settings.lang !== getLang()) {
@@ -607,6 +689,14 @@ function applyAccountSettings(settings: AccountSettings): void {
     themeSelect.value = settings.theme;
     writeSetting(THEME_KEY, settings.theme);
     setTheme(settings.theme);
+  }
+  if (settings.voidColor || settings.gridColor) {
+    saveOwnColors({ voidColor: settings.voidColor, gridColor: settings.gridColor });
+    ownColors.apply({ void: settings.voidColor, grid: settings.gridColor });
+  }
+  if (settings.toolsExpanded !== undefined) {
+    writeSetting(TOOLS_EXPANDED_KEY, String(settings.toolsExpanded));
+    rail.setExpanded(settings.toolsExpanded);
   }
 }
 
