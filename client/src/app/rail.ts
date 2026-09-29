@@ -1,5 +1,6 @@
 // The tool column of variant V (R45): an icon for each tool with the hint «Brush · B» on hover, undo and redo at
-// the bottom, and a button that shows the names beside the icons. Names and hints come from the dictionaries through
+// the bottom, and a button that shows the names beside the icons; on a phone the master's column hides behind a
+// button of the current tool (R51). Names and hints come from the dictionaries through
 // data-i18n and data-i18n-aria (main.ts); the key letter is the physical key of the tool (tools.ts).
 
 import { TOOLS, toolKey } from "../board/tools.ts";
@@ -67,14 +68,18 @@ export function buildRail(nav: HTMLElement, hooks: RailHooks): Rail {
   const toolGroups = GROUPS.map((tools) =>
     group(
       ...tools.map((tool) => {
-        const button = railButton(tool, `tool.${tool}`, toolKey(tool), () => hooks.choose(tool));
+        const button = railButton(tool, `tool.${tool}`, toolKey(tool), () => {
+          setOpen(false);
+          hooks.choose(tool);
+        });
         toolButtons.set(tool, button);
         return button;
       }),
     ),
   );
   const undoButton = railButton("undo", "toolbar.undo", "Ctrl+Z", hooks.undo);
-  const redoButton = railButton("redo", "toolbar.redo", "Ctrl+Shift+Z", hooks.redo);
+  const redoButton = railButton("redo", "toolbar.redo", "", hooks.redo);
+  redoButton.dataset.i18nKey = "toolbar.redoKeys";
   const history = group(undoButton, redoButton);
   history.classList.add("rail-history");
 
@@ -93,7 +98,33 @@ export function buildRail(nav: HTMLElement, hooks: RailHooks): Rail {
   const expandGroup = group(expandButton);
   expandGroup.classList.add("rail-toggle");
 
-  nav.append(...toolGroups, history, expandGroup);
+  // On a phone the master's column hides behind one round button of the current tool (R51, style.css): a press
+  // opens the column, choosing a tool or a press anywhere else closes it. Elsewhere this button is not shown.
+  const currentButton = document.createElement("button");
+  currentButton.type = "button";
+  currentButton.className = "rail-current";
+  currentButton.addEventListener("click", () => setOpen(!nav.classList.contains("open")));
+
+  function setOpen(open: boolean): void {
+    nav.classList.toggle("open", open);
+    currentButton.setAttribute("aria-expanded", String(open));
+  }
+
+  // A press outside the open column only closes it: on the map it neither paints nor moves anything.
+  document.addEventListener(
+    "pointerdown",
+    (event) => {
+      if (!nav.classList.contains("open") || nav.contains(event.target as Node)) return;
+      setOpen(false);
+      if (event.target instanceof HTMLCanvasElement) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    },
+    true,
+  );
+
+  nav.append(currentButton, ...toolGroups, history, expandGroup);
 
   function setExpanded(next: boolean): void {
     expanded = next;
@@ -106,11 +137,20 @@ export function buildRail(nav: HTMLElement, hooks: RailHooks): Rail {
   }
 
   setExpanded(false);
+  setOpen(false);
+
+  let shownCurrent: Tool | null = null;
 
   return {
     undoButton,
     redoButton,
     show(allowed, current) {
+      if (current !== shownCurrent) {
+        shownCurrent = current;
+        currentButton.replaceChildren(icon(current, ICON_PX));
+        currentButton.dataset.i18nAria = `tool.${current}`;
+        currentButton.setAttribute("aria-label", t(`tool.${current}`));
+      }
       for (const [tool, button] of toolButtons) {
         button.hidden = !allowed.includes(tool);
         button.setAttribute("aria-pressed", String(tool === current));

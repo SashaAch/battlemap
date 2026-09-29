@@ -147,6 +147,8 @@ function applyLanguage(): void {
   translateAttribute("data-i18n", (element, text) => (element.textContent = text));
   translateAttribute("data-i18n-title", (element, text) => (element.title = text));
   translateAttribute("data-i18n-aria", (element, text) => element.setAttribute("aria-label", text));
+  // The keys in the hint of a tool column button, when they need words ("or"): app/rail.ts.
+  translateAttribute("data-i18n-key", (element, text) => element.setAttribute("data-key", text));
   updateStatus();
   updateNotice();
   updateMeasure();
@@ -755,6 +757,7 @@ const games = startGame({
   },
   failed: (error) => account.failed(error),
   showGames: () => account.showGames(),
+  isAdmin: () => account.isAdmin(),
   measured: (summary) => {
     measured = summary;
     updateMeasure();

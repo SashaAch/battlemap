@@ -16,6 +16,7 @@ import { icon } from "../ui/icons.ts";
 import { request } from "./api.ts";
 import type { GameInfo, GameInvite, MemberInfo, SceneData, SceneSummary } from "./api.ts";
 import { inviteView } from "./invite.ts";
+import type { InviteView } from "./invite.ts";
 import { LiveScene } from "./live.ts";
 import type { Received } from "./live.ts";
 import { button, codeOf, errorKey, field, iconButton, labelled, setKey, setLabel } from "./login.ts";
@@ -57,6 +58,8 @@ export interface GameHooks {
   failed(error: unknown): void;
   /** Opens the "my games" screen. */
   showGames(): void;
+  /** Whether the signed-in user is an administrator: their invite also registers newcomers (R43). */
+  isAdmin(): boolean;
   /** With `?measure` in the address: the times there and back so far on the master's board, null to hide them (measure.ts). */
   measured(summary: RoundTripSummary | null): void;
 }
@@ -168,7 +171,7 @@ export function startGame(hooks: GameHooks): GameView {
   const measure = measuring(location.search);
   let roundTrips = new RoundTrips();
   /** The last invite made in the open game: it stays on the panel while friends scan it, though the panel is drawn again as they join. */
-  let shownInvite: HTMLElement | null = null;
+  let shownInvite: InviteView | null = null;
 
   const whenIdle = (): Promise<void> =>
     new Promise((resolve) => {
@@ -695,7 +698,9 @@ export function startGame(hooks: GameHooks): GameView {
   /**
    * The invite window, opened by "Invite" in the top bar (plan 8.26, R45). An invite code for some joins within some
    * days, like a registration code; shown only once, the server keeps its hash. With it the QR code and the links on
-   * the addresses of the computer (invite.ts). The last invite stays in the window while friends scan it.
+   * the addresses of the computer (invite.ts). The last invite stays in the window while friends scan it. Laid out
+   * after InviteCard of variant V: the QR code beside three steps, the limits, a note for an administrator, and
+   * «New code» and «Done» at the bottom.
    */
   function openInvite(): void {
     const game = info;
@@ -707,16 +712,47 @@ export function startGame(hooks: GameHooks): GameView {
     about.className = "muted";
     about.append(game.title, " · ", labelled("span", game.kind === "gm" ? "games.kind.gm" : "games.kind.personal"));
 
+    // The QR code beside the three steps (InviteCard of variant V); before the first invite, the steps alone.
+    const qrRow = document.createElement("div");
+    qrRow.className = "invite-qr-row";
+    const qrSlot = document.createElement("div");
+    qrSlot.className = "invite-qr";
+    const steps = document.createElement("ol");
+    steps.className = "invite-steps";
+    steps.append(labelled("li", "game.inviteStep1"), labelled("li", "game.inviteStep2"), labelled("li", "game.inviteStep3"));
+    qrRow.append(qrSlot, steps);
+    const details = document.createElement("div");
+    details.setAttribute("aria-live", "polite");
+
     const form = document.createElement("form");
-    form.className = "inline-form";
+    form.className = "invite-form";
     const uses = field("game.inviteUses", { type: "number", value: String(INVITE_USES), min: 1, max: INVITE_MAX_USES });
     const days = field("game.inviteDays", { type: "number", value: String(INVITE_DAYS), min: 1, max: INVITE_MAX_DAYS });
-    const submit = labelled("button", "game.createInvite", "primary");
+    const limits = document.createElement("div");
+    limits.className = "invite-limits";
+    limits.append(uses.wrap, days.wrap);
+    form.append(limits);
+    // Only an administrator's invite also registers a newcomer (R43): the others would be told something untrue.
+    if (hooks.isAdmin()) form.append(labelled("p", "game.inviteAdminNote", "invite-note"));
+    const submit = document.createElement("button");
     submit.type = "submit";
-    form.append(uses.wrap, days.wrap, submit);
-    const result = document.createElement("div");
-    result.setAttribute("aria-live", "polite");
-    if (shownInvite) result.append(shownInvite);
+    const done = labelled("button", "game.inviteDone", "primary");
+    done.type = "button";
+    done.addEventListener("click", () => invite.close());
+    const buttons = document.createElement("div");
+    buttons.className = "invite-buttons";
+    buttons.append(submit, done);
+    form.append(buttons);
+
+    /** Shows the invite made last, or the steps alone; the submit button makes the first invite or a new one. */
+    const showInvite = (): void => {
+      qrSlot.replaceChildren(...(shownInvite ? [shownInvite.qr] : []));
+      qrSlot.hidden = shownInvite === null;
+      details.replaceChildren(...(shownInvite ? [shownInvite.details] : []));
+      setKey(submit, shownInvite ? "game.inviteNew" : "game.createInvite");
+      submit.className = shownInvite ? "" : "primary";
+      done.hidden = shownInvite === null;
+    };
     form.addEventListener("submit", (event) => {
       event.preventDefault();
       const reply = request<GameInvite>("POST", `api/games/${game.id}/invites`, {
@@ -725,10 +761,11 @@ export function startGame(hooks: GameHooks): GameView {
       });
       act(game.id, reply, (created) => {
         shownInvite = inviteView(created);
-        result.replaceChildren(shownInvite);
+        showInvite();
       });
     });
-    invite.replaceChildren(header, about, result, form);
+    showInvite();
+    invite.replaceChildren(header, about, qrRow, details, form);
     invite.showModal();
   }
 

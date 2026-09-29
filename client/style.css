@@ -383,6 +383,11 @@ input[type="color"] {
   white-space: nowrap;
 }
 
+/* The button of the current tool that opens the column: on a phone only (R51). */
+.rail-current {
+  display: none;
+}
+
 .tool-rail.expanded .rail-button {
   width: 100%;
   padding-right: 14px;
@@ -849,10 +854,49 @@ dialog label {
 
 .invite-dialog form {
   display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 
-.invite-dialog input[type="number"] {
-  width: 7em;
+/* The QR code beside the three steps (InviteCard of variant V). */
+.invite-qr-row {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.invite-steps {
+  margin: 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  line-height: 1.4;
+}
+
+.invite-limits {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.invite-limits input {
+  width: 100%;
+}
+
+.invite-note {
+  margin: 0;
+  padding: 10px 12px;
+  line-height: 1.4;
+  background: var(--ui-field);
+  border-left: 3px solid var(--ui-accent);
+  border-radius: 9px;
+}
+
+.invite-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 
 /* A new invite (app/invite.ts): the QR code has the same colours in every theme (themes.css). */
@@ -862,13 +906,27 @@ dialog label {
   gap: 10px;
 }
 
+.invite-qr {
+  flex: none;
+  max-width: 55%;
+}
+
 .qr {
   display: block;
-  align-self: center;
   max-width: 100%;
   height: auto;
   border-radius: 10px;
   image-rendering: pixelated;
+}
+
+.link-row {
+  display: flex;
+  gap: 8px;
+}
+
+.link-row input {
+  flex: 1;
+  min-width: 0;
 }
 
 /* ---- screens without the board (app/login.ts): sign-in, my games, administration ---- */
@@ -1092,24 +1150,63 @@ dialog label {
     width: min(320px, calc(100vw - 24px));
   }
 
-  /* The master's column stays narrow and short, icons only: with the strip it keeps under a fifth of the map. */
+  /*
+   * The master's column hides behind one round button of the current tool (R51); a press opens the column of
+   * buttons 44 px square with undo and redo, above the map and the strip, scrolling when the screen is short.
+   */
   .tool-rail {
     left: 12px;
     top: 76px;
-    max-height: calc(100vh - 76px - 88px);
+    z-index: 12;
+    max-height: calc(100vh - 76px - 12px);
     overflow-y: auto;
-    padding: 3px;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    box-shadow: none;
+  }
+
+  body:not(.read-only) .rail-current {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: none;
+    width: 52px;
+    height: 52px;
+    padding: 0;
+    color: var(--ui-accent-fg);
+    background: var(--ui-accent);
+    border: 1px solid var(--ui-accent);
+    border-radius: 50%;
+    box-shadow: 0 6px 16px var(--ui-shadow);
+  }
+
+  body:not(.read-only) .tool-rail:not(.open) .rail-group {
+    display: none;
+  }
+
+  .tool-rail.open {
+    padding: 6px;
+    background: var(--ui-bg);
+    border: 1px solid var(--ui-border);
+    border-radius: 16px;
+    box-shadow: 0 6px 16px var(--ui-shadow);
+  }
+
+  .tool-rail.open .rail-current {
+    margin-bottom: 6px;
   }
 
   .rail-button,
   .tool-rail.expanded .rail-button {
-    width: 36px;
-    height: 32px;
-    padding: 0 7.5px;
+    width: 44px;
+    height: 44px;
+    padding: 0 11.5px;
   }
 
   .tool-rail .rail-label,
-  .rail-toggle {
+  .rail-toggle,
+  .tool-rail .rail-button:hover::after {
     display: none !important;
   }
 
@@ -1214,6 +1311,18 @@ dialog label {
     inset: 0;
     width: auto;
     border-radius: 0;
+  }
+
+  /* The invite window: the steps under the QR code, where they have the width to read. */
+  .invite-qr-row {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .invite-qr {
+    align-self: center;
+    max-width: 100%;
   }
 
   .screen {

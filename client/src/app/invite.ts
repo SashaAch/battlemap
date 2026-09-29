@@ -43,14 +43,20 @@ function addressText(link: InviteLink): string {
   return link.adapter === null ? address : t("game.inviteAddressOption", { address, adapter: link.adapter });
 }
 
-export function inviteView(invite: GameInvite): HTMLElement {
+/** A shown invite in the window of variant V (InviteCard): the QR code beside the steps, the rest under them. */
+export interface InviteView {
+  /** The QR code on white, or the note that the link is too long for one. */
+  qr: HTMLElement;
+  /** The choice of address, the link with the copy button, the code itself and the note about the network. */
+  details: HTMLElement;
+}
+
+export function inviteView(invite: GameInvite): InviteView {
+  const qr = document.createElement("div");
   const view = document.createElement("div");
   view.className = "invite";
-  const until = new Date(invite.expiresAt).toLocaleString(getLang());
-  view.append(secretLine("game.inviteCode", { uses: String(invite.maxUses), until }, invite.code));
   const local = invite.links.length === 0;
   const links = local ? [pageLink(invite.code)] : invite.links;
-  view.append(labelled("p", local ? "game.inviteLocalOnly" : "game.inviteHint", "form-note"));
 
   const canvas = document.createElement("canvas");
   canvas.className = "qr";
@@ -59,12 +65,17 @@ export function inviteView(invite: GameInvite): HTMLElement {
   canvas.title = t("game.inviteQr");
   const tooLong = labelled("p", "game.inviteTooLong", "form-note");
 
-  const linkWrap = document.createElement("label");
+  const linkWrap = document.createElement("div");
   linkWrap.className = "field";
   const linkInput = document.createElement("input");
   linkInput.type = "text";
   linkInput.readOnly = true;
-  linkWrap.append(labelled("span", "game.inviteLink"), linkInput);
+  linkInput.id = "invite-link";
+  const linkLabel = labelled("label", "game.inviteLink");
+  linkLabel.htmlFor = linkInput.id;
+  const linkRow = document.createElement("div");
+  linkRow.className = "link-row";
+  linkWrap.append(linkLabel, linkRow);
   const status = document.createElement("p");
   status.className = "form-note";
   status.setAttribute("role", "status");
@@ -110,10 +121,15 @@ export function inviteView(invite: GameInvite): HTMLElement {
     addressWrap.append(labelled("span", "game.inviteAddress"), select);
     view.append(addressWrap);
   }
-  const actions = document.createElement("div");
-  actions.className = "actions";
-  actions.append(copy);
-  view.append(canvas, tooLong, linkWrap, actions, status);
+  linkRow.append(linkInput, copy);
+  const until = new Date(invite.expiresAt).toLocaleString(getLang());
+  view.append(
+    linkWrap,
+    status,
+    secretLine("game.inviteCode", { uses: String(invite.maxUses), until }, invite.code),
+    labelled("p", local ? "game.inviteLocalOnly" : "game.inviteHint", "form-note"),
+  );
+  qr.append(canvas, tooLong);
   show(links[0]);
-  return view;
+  return { qr, details: view };
 }

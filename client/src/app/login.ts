@@ -38,6 +38,8 @@ export interface Account {
   /** A failed request outside a form: an ended session goes back to sign-in, anything else is a notice. */
   failed(error: unknown): void;
   showGames(): void;
+  /** Whether the signed-in user is an administrator of the server. */
+  isAdmin(): boolean;
 }
 
 // ---- small DOM helpers, shared with admin.ts ----
@@ -438,6 +440,7 @@ export function startAccount(hooks: AccountHooks): Account {
   return {
     failed,
     showGames: () => showGames(""),
+    isAdmin: () => me?.role === "admin",
     saveSettings(change) {
       if (!me || me.mustChangePassword) return;
       request("PUT", "api/me/settings", change).catch((error: unknown) => {
