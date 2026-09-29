@@ -1,7 +1,17 @@
-// Board input: camera (wheel, space or middle button drag, two fingers) and the terrain brush.
+// Board input: camera (mouse wheel and trackpad, space or middle button drag, two fingers) and the terrain brush.
 
 import type { TerrainId } from "./catalog.ts";
-import { brushSquare, cellKey, cellsOfSquare, isCellInRange, panBy, pointsAlong, screenToWorld, zoomAt } from "./geometry.ts";
+import {
+  brushSquare,
+  cellKey,
+  cellsOfSquare,
+  isCellInRange,
+  panBy,
+  pointsAlong,
+  screenToWorld,
+  wheelGesture,
+  zoomAt,
+} from "./geometry.ts";
 import type { Camera, Point } from "./geometry.ts";
 import { applyToChange, beginChange, cancelChange, finishChange } from "./store.ts";
 import type { History, Patch, Scene } from "./store.ts";
@@ -185,10 +195,15 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
     "wheel",
     (e) => {
       e.preventDefault();
-      const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? LINE_HEIGHT_PX : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? canvas.clientHeight : 1;
-      const factor = Math.exp(-e.deltaY * unit * (e.ctrlKey ? PINCH_ZOOM : WHEEL_ZOOM));
       const point = screenPoint(e);
-      board.camera = zoomAt(board.camera, point, factor);
+      if (wheelGesture(e) === "pan") {
+        // Two-finger trackpad scroll: always in pixels, the map moves against the scroll like a page.
+        board.camera = panBy(board.camera, -e.deltaX, -e.deltaY);
+      } else {
+        const unit = e.deltaMode === WheelEvent.DOM_DELTA_LINE ? LINE_HEIGHT_PX : e.deltaMode === WheelEvent.DOM_DELTA_PAGE ? canvas.clientHeight : 1;
+        const factor = Math.exp(-e.deltaY * unit * (e.ctrlKey ? PINCH_ZOOM : WHEEL_ZOOM));
+        board.camera = zoomAt(board.camera, point, factor);
+      }
       board.hover = screenToWorld(board.camera, point);
       hooks.hoverChanged();
       hooks.redraw();

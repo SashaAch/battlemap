@@ -13,6 +13,7 @@ import {
   parseCellKey,
   pointsAlong,
   screenToWorld,
+  wheelGesture,
   worldToScreen,
   zoomAt,
 } from "../client/src/board/geometry.ts";
@@ -86,6 +87,35 @@ describe("camera", () => {
     const grabbed = screenToWorld(camera, { x: 100, y: 100 });
     const moved = panBy(camera, 30, -50);
     assert.deepEqual(screenToWorld(moved, { x: 130, y: 50 }), grabbed);
+  });
+});
+
+describe("wheel: mouse or trackpad", () => {
+  const wheel = (deltaY: number, deltaMode = 0, deltaX = 0, ctrlKey = false) => ({ deltaX, deltaY, deltaMode, ctrlKey });
+
+  test("a mouse wheel on Windows (whole 100 px steps) zooms", () => {
+    assert.equal(wheelGesture(wheel(100)), "zoom");
+    assert.equal(wheelGesture(wheel(-100)), "zoom");
+  });
+
+  test("a mouse wheel in Firefox (lines) and in page mode zooms", () => {
+    assert.equal(wheelGesture(wheel(3, 1)), "zoom");
+    assert.equal(wheelGesture(wheel(-1, 2)), "zoom");
+  });
+
+  test("a two-finger trackpad scroll pans", () => {
+    assert.equal(wheelGesture(wheel(4.5, 0, 1.2)), "pan");
+  });
+
+  test("a strictly vertical trackpad scroll with a fractional or small step pans", () => {
+    assert.equal(wheelGesture(wheel(2.25)), "pan");
+    assert.equal(wheelGesture(wheel(-117.5)), "pan");
+    assert.equal(wheelGesture(wheel(4)), "pan");
+  });
+
+  test("a trackpad pinch (wheel with Ctrl) zooms", () => {
+    assert.equal(wheelGesture(wheel(4.5, 0, 1.2, true)), "zoom");
+    assert.equal(wheelGesture(wheel(-0.8, 0, 0, true)), "zoom");
   });
 });
 

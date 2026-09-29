@@ -64,6 +64,30 @@ export function panBy(camera: Camera, dx: number, dy: number): Camera {
   return { x: camera.x - dx / camera.scale, y: camera.y - dy / camera.scale, scale: camera.scale };
 }
 
+/** The fields of a wheel event that tell a mouse wheel from a trackpad. */
+interface WheelInput {
+  deltaX: number;
+  deltaY: number;
+  /** 0 pixels, 1 lines, 2 pages (WheelEvent.deltaMode). */
+  deltaMode: number;
+  ctrlKey: boolean;
+}
+
+// A mouse wheel notch is a whole pixel step of at least this size on one axis; trackpads send smaller or fractional steps.
+const MOUSE_WHEEL_MIN_STEP_PX = 50;
+
+/**
+ * Guesses the gesture behind a wheel event: a mouse wheel and a trackpad pinch
+ * (sent with Ctrl) zoom, a two-finger trackpad scroll pans.
+ */
+export function wheelGesture(input: WheelInput): "zoom" | "pan" {
+  if (input.ctrlKey) return "zoom";
+  if (input.deltaMode !== 0) return "zoom";
+  if (input.deltaX !== 0) return "pan";
+  const step = Math.abs(input.deltaY);
+  return Number.isInteger(step) && step >= MOUSE_WHEEL_MIN_STEP_PX ? "zoom" : "pan";
+}
+
 /**
  * The brush square of `size` cells centred on a world point:
  * odd sizes centre on the cell under the point, even sizes on the nearest grid corner.
