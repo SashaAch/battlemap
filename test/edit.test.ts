@@ -214,7 +214,7 @@ describe("eraser", () => {
       ["objects", "o2", { type: "pillar", x: 0, y: 0 }],
       ["marks", "m1", { color: "#c0392b", pts: [[0.2, 0.2], [2.5, 1.5]] }],
       ["marks", "m2", { color: "#c0392b", pts: [[0.5, 0.5]] }],
-      ["tokens", "t1", { name: "Гоблин", x: 2, y: 1 }],
+      ["tokens", "t1", { name: "Гоблин", side: "enemies", size: "small", x: 2, y: 1, hidden: false, vision: null, character: null }],
     ]);
     return scene;
   }
@@ -263,12 +263,11 @@ describe("eraser", () => {
   });
 
   test("marks and objects with odd data are left alone", () => {
+    // Such values fail the checks of store.ts; they are put in directly to see the eraser does not trip on them.
     const scene = newScene();
-    applyPatch(scene, [
-      ["objects", "o1", { type: "pillar" }],
-      ["marks", "m1", { pts: "none" }],
-      ["marks", "m2", { pts: [[1], "x"] }],
-    ]);
+    scene.objects.o1 = { type: "pillar" };
+    scene.marks.m1 = { pts: "none" };
+    scene.marks.m2 = { pts: [[1], "x"] };
     assert.deepEqual(erasePatch(scene, { x: 0, y: 0, size: 3 }, "items"), []);
   });
 

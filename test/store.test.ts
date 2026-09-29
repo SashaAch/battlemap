@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 
-import { EDGE_TYPES, TERRAIN } from "../client/src/board/catalog.ts";
+import { EDGE_TYPES, MARK_COLORS, OBJECT_TYPES, SIDES, SIZES, TERRAIN } from "../client/src/board/catalog.ts";
 import {
   applyPatch,
   applyToChange,
@@ -32,6 +32,11 @@ function seededRandom(seed: number): () => number {
   };
 }
 
+/** A valid token (plan 6.1) with some fields replaced. */
+function token(fields: Record<string, unknown> = {}): Record<string, unknown> {
+  return { name: "Гоблин", side: "enemies", size: "small", x: 0, y: 0, hidden: false, vision: null, character: null, ...fields };
+}
+
 function randomOp(random: () => number): PatchOp {
   const pick = <T>(list: readonly T[]): T => list[Math.floor(random() * list.length)];
   const coord = (): number => Math.floor(random() * 7) - 3; // small range, so keys repeat
@@ -54,7 +59,7 @@ function randomOp(random: () => number): PatchOp {
     case "objects":
       return ["objects", `o${Math.floor(random() * 5)}`, remove ? null : { type: "pillar", x: coord(), y: coord() }];
     case "tokens":
-      return ["tokens", `t${Math.floor(random() * 5)}`, remove ? null : { name: "Гоблин", x: coord(), y: coord() }];
+      return ["tokens", `t${Math.floor(random() * 5)}`, remove ? null : token({ x: coord(), y: coord() })];
     case "marks":
       return ["marks", `m${Math.floor(random() * 5)}`, remove ? null : { color: "#c0392b", pts: [[random(), random()]] }];
   }
@@ -316,7 +321,7 @@ describe("reading a scene", () => {
     validatePatch([
       ["cells", "-9999,9999", "floor"],
       ["edges", "v:-1,0", "wall"],
-      ["tokens", "abc123def456", {}],
+      ["tokens", "abc123def456", token()],
     ]);
   });
 
@@ -366,8 +371,78 @@ describe("reading a scene", () => {
 
   test("objects, tokens and marks hold objects", () => {
     for (const name of ["objects", "tokens", "marks"]) {
-      for (const value of ["x", 1, []]) assertSceneError(() => validatePatch([[name, "a1", value]]), "value");
+      for (const value of ["x", 1, [], {}]) assertSceneError(() => validatePatch([[name, "a1", value]]), "value");
     }
+  });
+
+  test("a token takes sides and sizes from the catalog, every size and side is accepted", () => {
+    for (const side of SIDES) validatePatch([["tokens", "t1", token({ side: side.id })]]);
+    for (const size of SIZES) validatePatch([["tokens", "t1", token({ size: size.id })]]);
+    validatePatch([["tokens", "t1", token({ vision: 60, hidden: true, name: "" })]]);
+  });
+
+  test("wrong token values are rejected", () => {
+    const bad: Record<string, unknown>[] = [
+      token({ side: "monsters" }),
+      token({ size: "colossal" }),
+      token({ size: "Large" }),
+      token({ name: "я".repeat(41) }),
+      token({ name: 5 }),
+      token({ x: 1.5 }),
+      token({ y: "2" }),
+      token({ x: Number.NaN }),
+      token({ x: 10000 }),
+      token({ x: 9999, size: "large" }), // the space runs out of the key range
+      token({ y: -10000 }),
+      token({ hidden: "no" }),
+      token({ vision: -5 }),
+      token({ vision: Number.POSITIVE_INFINITY }),
+      token({ vision: "60" }),
+      token({ character: "c1" }),
+      token({ extra: 1 }),
+    ];
+    const missing = token();
+    delete missing.hidden;
+    bad.push(missing);
+    for (const value of bad) assertSceneError(() => validatePatch([["tokens", "t1", value]]), "value");
+    validatePatch([["tokens", "t1", token({ name: "я".repeat(40), x: 9998, y: -9999, size: "large" })]]);
+  });
+
+  test("an object is a type from the catalog in a cell", () => {
+    for (const type of OBJECT_TYPES) validatePatch([["objects", "o1", { type, x: -3, y: 4 }]]);
+    const bad: unknown[] = [
+      { type: "fountain", x: 0, y: 0 },
+      { type: "pillar", x: 0.5, y: 0 },
+      { type: "pillar", x: 0, y: 10000 },
+      { type: "pillar", x: 0 },
+      { type: "pillar", x: 0, y: 0, color: "red" },
+    ];
+    for (const value of bad) assertSceneError(() => validatePatch([["objects", "o1", value]]), "value");
+  });
+
+  test("a mark has a pencil colour and from 1 to 2000 points in range", () => {
+    for (const color of MARK_COLORS) validatePatch([["marks", "m1", { color: color.value, pts: [[0.5, 0.5]] }]]);
+    const pts = (count: number): number[][] => Array.from({ length: count }, (_, i) => [i / 10, -i / 10]);
+    validatePatch([["marks", "m1", { color: "#c0392b", pts: pts(2000) }]]);
+    validatePatch([["marks", "m1", { color: "#c0392b", pts: [[-9999, 10000]] }]]);
+    const bad: unknown[] = [
+      { color: "#123456", pts: [[0, 0]] },
+      { color: "red", pts: [[0, 0]] },
+      { color: "#c0392b", pts: [] },
+      { color: "#c0392b", pts: pts(2001) },
+      { color: "#c0392b", pts: [[0, Number.NaN]] },
+      { color: "#c0392b", pts: [[0, Number.POSITIVE_INFINITY]] },
+      { color: "#c0392b", pts: [[10000.5, 0]] },
+      { color: "#c0392b", pts: [[0, 0, 0]] },
+      { color: "#c0392b", pts: [["0", 0]] },
+      { color: "#c0392b", pts: "0,0" },
+      { color: "#c0392b", pts: [[0, 0]], width: 3 },
+    ];
+    for (const value of bad) assertSceneError(() => validatePatch([["marks", "m1", value]]), "value");
+  });
+
+  test("a scene file with a bad token is not opened", () => {
+    assertSceneError(() => parseScene({ v: 1, tokens: { t1: token({ size: "huge", x: 9998 }) } }), "value");
   });
 
   test("null is a deletion in a patch but not a stored value", () => {

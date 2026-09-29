@@ -1,21 +1,35 @@
-// Drawing the board on a canvas: void, terrain, hatching of difficult terrain, grid, walls and openings, tool cursor.
+// Drawing the board on a canvas, bottom to top (plan 5.8): void, terrain, hatching of difficult terrain, grid,
+// objects, walls and openings, pencil marks, tokens, then what the tools show over it.
 
-import { EDGE_COLORS, TERRAIN_BY_ID } from "./catalog.ts";
+import { EDGE_COLORS, sideColor, TERRAIN_BY_ID, TOKEN_COLORS } from "./catalog.ts";
+import type { MarkColor } from "./catalog.ts";
 import { parseCellKey, parseEdgeKey, screenToWorld, worldToScreen } from "./geometry.ts";
 import type { Camera, CellSquare, GridEdge, Point } from "./geometry.ts";
+import { tokenLayout } from "./pieces.ts";
+import { drawObjectSign } from "./signs.ts";
+import { isMapObject, isMark } from "./store.ts";
 import type { Scene } from "./store.ts";
 
-/** What the current tool shows under the pointer: the brush or eraser square, the nearest edge, the outline being drawn. */
-export type BoardCursor =
+/**
+ * What the tools show over the board: the brush or eraser square, the nearest edge, the outline being drawn,
+ * the pencil line being drawn, the ruler, the path of a dragged token with its cost, the selected square.
+ */
+export type BoardOverlay =
   | { kind: "square"; square: CellSquare }
   | { kind: "edge"; key: string }
-  | { kind: "outline"; points: readonly Point[] };
+  | { kind: "outline"; points: readonly Point[] }
+  | { kind: "mark"; color: MarkColor; points: readonly [number, number][] }
+  | { kind: "ruler"; from: Point; to: Point; label: string }
+  | { kind: "path"; places: readonly Point[]; span: number; label: string }
+  | { kind: "selected"; square: CellSquare };
 
 /** Board interface colours taken from the current theme (themes.css). */
 export interface BoardColors {
   void: string;
   grid: string;
   cursor: string;
+  labelBack: string;
+  labelText: string;
 }
 
 export interface Viewport {
@@ -33,7 +47,13 @@ export function readBoardColors(): BoardColors {
     if (!value) throw new Error(`theme variable ${name} is not set`);
     return value;
   };
-  return { void: read("--board-void"), grid: read("--board-grid"), cursor: read("--board-cursor") };
+  return {
+    void: read("--board-void"),
+    grid: read("--board-grid"),
+    cursor: read("--board-cursor"),
+    labelBack: read("--board-label-bg"),
+    labelText: read("--board-label-fg"),
+  };
 }
 
 /** Matches the canvas backing store to its CSS size and the device pixel ratio. */
@@ -57,7 +77,7 @@ export function drawBoard(
   scene: Scene,
   camera: Camera,
   colors: BoardColors,
-  cursor: BoardCursor | null,
+  overlays: readonly BoardOverlay[],
 ): void {
   const topLeft = screenToWorld(camera, { x: 0, y: 0 });
   const bottomRight = screenToWorld(camera, { x: viewport.width, y: viewport.height });
@@ -83,32 +103,187 @@ export function drawBoard(
   for (const [color, area] of hatched) drawHatch(ctx, camera, topLeft, bottomRight, color, area);
 
   drawGrid(ctx, viewport, camera, topLeft, bottomRight, colors.grid);
+  drawObjects(ctx, scene, camera, topLeft, bottomRight);
   drawEdges(ctx, scene, camera, topLeft, bottomRight);
-  if (cursor) drawCursor(ctx, camera, cursor, colors.cursor);
+  for (const mark of Object.values(scene.marks)) {
+    if (isMark(mark)) drawMarkLine(ctx, camera, mark.color, mark.pts);
+  }
+  drawTokens(ctx, scene, camera, topLeft, bottomRight);
+  for (const overlay of overlays) drawOverlay(ctx, camera, overlay, colors);
 }
 
-function drawCursor(ctx: CanvasRenderingContext2D, camera: Camera, cursor: BoardCursor, color: string): void {
+const isSquareVisible = (square: CellSquare, topLeft: Point, bottomRight: Point): boolean =>
+  square.x + square.size >= topLeft.x && square.x <= bottomRight.x && square.y + square.size >= topLeft.y && square.y <= bottomRight.y;
+
+function drawObjects(ctx: CanvasRenderingContext2D, scene: Scene, camera: Camera, topLeft: Point, bottomRight: Point): void {
+  for (const item of Object.values(scene.objects)) {
+    if (!isMapObject(item) || !isSquareVisible({ x: item.x, y: item.y, size: 1 }, topLeft, bottomRight)) continue;
+    const corner = worldToScreen(camera, item);
+    drawObjectSign(ctx, item.type, corner.x, corner.y, camera.scale);
+  }
+}
+
+/** Pencil line width in cells, with a floor in pixels. */
+const MARK_WIDTH = 0.08;
+
+function drawMarkLine(ctx: CanvasRenderingContext2D, camera: Camera, color: string, points: readonly [number, number][]): void {
+  if (points.length === 0) return;
+  const width = Math.max(2, camera.scale * MARK_WIDTH);
+  const screen = points.map(([x, y]) => worldToScreen(camera, { x, y }));
+  ctx.save();
+  ctx.fillStyle = color;
   ctx.strokeStyle = color;
-  ctx.lineWidth = 2;
-  if (cursor.kind === "square") {
-    const [x, y, w, h] = cellRect(camera, cursor.square.x, cursor.square.y, cursor.square.size);
-    ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
-    return;
-  }
+  ctx.lineWidth = width;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
   ctx.beginPath();
-  if (cursor.kind === "edge") {
-    const [a, b] = edgeEnds(camera, parseEdgeKey(cursor.key));
-    ctx.lineWidth = 4;
-    ctx.moveTo(a.x, a.y);
-    ctx.lineTo(b.x, b.y);
+  if (screen.length === 1) {
+    ctx.arc(screen[0].x, screen[0].y, width / 2, 0, 2 * Math.PI);
+    ctx.fill();
   } else {
-    for (const point of cursor.points) {
-      const p = worldToScreen(camera, point);
-      ctx.lineTo(p.x, p.y);
-    }
-    ctx.closePath();
+    for (const p of screen) ctx.lineTo(p.x, p.y);
+    ctx.stroke();
   }
-  ctx.stroke();
+  ctx.restore();
+}
+
+// Tokens: a disc of the side colour in the space; the name under it on a dark plate when the token is large enough on screen.
+const TOKEN_INSET = 0.06;
+const TOKEN_OUTLINE = 0.05;
+const NAME_MIN_PX = 28;
+const NAME_FONT = 0.28;
+
+function drawTokens(ctx: CanvasRenderingContext2D, scene: Scene, camera: Camera, topLeft: Point, bottomRight: Point): void {
+  ctx.save();
+  for (const { token, square } of tokenLayout(scene)) {
+    if (!isSquareVisible(square, topLeft, bottomRight)) continue;
+    const px = square.size * camera.scale;
+    const center = worldToScreen(camera, { x: square.x + square.size / 2, y: square.y + square.size / 2 });
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, px * (0.5 - TOKEN_INSET), 0, 2 * Math.PI);
+    ctx.fillStyle = sideColor(token.side);
+    ctx.fill();
+    ctx.lineWidth = Math.max(1.5, Math.min(px, camera.scale) * TOKEN_OUTLINE);
+    ctx.strokeStyle = TOKEN_COLORS.outline;
+    ctx.stroke();
+    if (token.name !== "" && px >= NAME_MIN_PX) drawName(ctx, token.name, center.x, center.y + px * 0.5, camera.scale);
+  }
+  ctx.restore();
+}
+
+/** A token name, user text, is drawn as canvas text only; long names are cut with an ellipsis. */
+function drawName(ctx: CanvasRenderingContext2D, name: string, x: number, bottom: number, scale: number): void {
+  const size = Math.max(10, Math.min(16, Math.round(scale * NAME_FONT)));
+  ctx.font = `${size}px system-ui, sans-serif`;
+  const maxWidth = Math.max(scale * 2.5, 60);
+  let text = name;
+  if (ctx.measureText(text).width > maxWidth) {
+    const chars = [...name];
+    while (chars.length > 1 && ctx.measureText(`${chars.join("")}…`).width > maxWidth) chars.pop();
+    text = `${chars.join("")}…`;
+  }
+  drawLabel(ctx, text, x, bottom - size * 0.2, TOKEN_COLORS.labelBack, TOKEN_COLORS.label, "center");
+}
+
+/** Text on a rounded plate; `x` is the centre or the left edge, `y` the middle of the text. */
+function drawLabel(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  back: string,
+  fore: string,
+  align: "center" | "left",
+): void {
+  const width = ctx.measureText(text).width;
+  const size = parseInt(ctx.font, 10);
+  const padX = size * 0.35;
+  const left = align === "center" ? x - width / 2 : x;
+  ctx.beginPath();
+  ctx.roundRect(left - padX, y - size * 0.65, width + 2 * padX, size * 1.3, size * 0.3);
+  ctx.fillStyle = back;
+  ctx.fill();
+  ctx.fillStyle = fore;
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(text, left, y);
+}
+
+const LABEL_FONT_PX = 14;
+
+function drawOverlay(ctx: CanvasRenderingContext2D, camera: Camera, overlay: BoardOverlay, colors: BoardColors): void {
+  ctx.save();
+  ctx.strokeStyle = colors.cursor;
+  ctx.lineWidth = 2;
+  ctx.font = `${LABEL_FONT_PX}px system-ui, sans-serif`;
+  switch (overlay.kind) {
+    case "square":
+    case "selected": {
+      const [x, y, w, h] = cellRect(camera, overlay.square.x, overlay.square.y, overlay.square.size);
+      if (overlay.kind === "selected") ctx.setLineDash([6, 4]);
+      ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+      break;
+    }
+    case "edge": {
+      const [a, b] = edgeEnds(camera, parseEdgeKey(overlay.key));
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      break;
+    }
+    case "outline":
+      ctx.beginPath();
+      for (const point of overlay.points) {
+        const p = worldToScreen(camera, point);
+        ctx.lineTo(p.x, p.y);
+      }
+      ctx.closePath();
+      ctx.stroke();
+      break;
+    case "mark":
+      drawMarkLine(ctx, camera, overlay.color, overlay.points);
+      break;
+    case "ruler": {
+      const a = worldToScreen(camera, { x: overlay.from.x + 0.5, y: overlay.from.y + 0.5 });
+      const b = worldToScreen(camera, { x: overlay.to.x + 0.5, y: overlay.to.y + 0.5 });
+      ctx.lineWidth = 3;
+      ctx.setLineDash([8, 6]);
+      ctx.beginPath();
+      ctx.moveTo(a.x, a.y);
+      ctx.lineTo(b.x, b.y);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      for (const p of [a, b]) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 4, 0, 2 * Math.PI);
+        ctx.fillStyle = colors.cursor;
+        ctx.fill();
+      }
+      drawLabel(ctx, overlay.label, b.x + 12, b.y - 14, colors.labelBack, colors.labelText, "left");
+      break;
+    }
+    case "path": {
+      const half = overlay.span / 2;
+      const centers = overlay.places.map((place) => worldToScreen(camera, { x: place.x + half, y: place.y + half }));
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      for (const p of centers) ctx.lineTo(p.x, p.y);
+      ctx.stroke();
+      ctx.fillStyle = colors.cursor;
+      for (const p of centers) {
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 3, 0, 2 * Math.PI);
+        ctx.fill();
+      }
+      const last = overlay.places[overlay.places.length - 1];
+      const corner = worldToScreen(camera, { x: last.x + overlay.span, y: last.y });
+      drawLabel(ctx, overlay.label, corner.x + 6, corner.y + 4, colors.labelBack, colors.labelText, "left");
+      break;
+    }
+  }
+  ctx.restore();
 }
 
 /** Screen ends of an edge: its first vertex and the next one to the right (h) or down (v). */

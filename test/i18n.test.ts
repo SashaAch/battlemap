@@ -5,6 +5,8 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, test } from "node:test";
 
+import { EDGE_TYPES, MARK_COLORS, OBJECT_TYPES, SIDES, SIZES, TERRAIN } from "../client/src/board/catalog.ts";
+import { DIAGONAL_RULES } from "../client/src/board/store.ts";
 import { en } from "../client/src/i18n/en.ts";
 import { defaultLang, getLang, setLang, t } from "../client/src/i18n/index.ts";
 import { ru } from "../client/src/i18n/ru.ts";
@@ -28,6 +30,22 @@ describe("dictionaries", () => {
     const keys = [...html.matchAll(/data-i18n(?:-title)?="([^"]+)"/g)].map((match) => match[1]);
     assert.ok(keys.length > 0);
     for (const key of keys) assert.ok(Object.hasOwn(ru, key), `index.html uses unknown key ${key}`);
+  });
+
+  test("every catalog entry named in the interface has a string in both dictionaries", () => {
+    const keys = [
+      ...TERRAIN.map((terrain) => `terrain.${terrain.id}`),
+      ...EDGE_TYPES.map((type) => `edge.${type}`),
+      ...SIDES.map((side) => `side.${side.id}`),
+      ...SIZES.map((size) => `size.${size.id}`),
+      ...OBJECT_TYPES.map((type) => `object.${type}`),
+      ...MARK_COLORS.map((color) => `color.${color.id}`),
+      ...DIAGONAL_RULES.map((rule) => `diagonal.${rule}`),
+    ];
+    for (const key of keys) {
+      assert.ok(Object.hasOwn(ru, key), `ru lacks ${key}`);
+      assert.ok(Object.hasOwn(en, key), `en lacks ${key}`);
+    }
   });
 });
 
@@ -73,6 +91,8 @@ describe("themes.css", () => {
 
   test("the board colours read by the canvas are there", () => {
     const variables = themes.values().next().value ?? [];
-    for (const name of ["--board-void", "--board-grid", "--board-cursor"]) assert.ok(variables.includes(name), name);
+    for (const name of ["--board-void", "--board-grid", "--board-cursor", "--board-label-bg", "--board-label-fg"]) {
+      assert.ok(variables.includes(name), name);
+    }
   });
 });
