@@ -108,17 +108,21 @@ export function moveTokenPatch(scene: Scene, id: string, place: Point): Patch | 
   return isToken(moved) ? [["tokens", id, moved]] : [];
 }
 
+/** Why an edit of a token was refused: a tiny token in a full cell, or a space past the end of the key range. */
+export type EditRefusal = "tinyFull" | "outOfRange";
+
 /**
  * Changes side, size and name of a token; a changed name is numbered like a new one.
- * Null when it becomes tiny in a full cell, empty when nothing changes or the space would not fit.
+ * Empty when nothing changes or the token is gone.
  */
-export function editTokenPatch(scene: Scene, id: string, draft: TokenDraft): Patch | null {
+export function editTokenPatch(scene: Scene, id: string, draft: TokenDraft): Patch | EditRefusal {
   const token = scene.tokens[id];
   if (!isToken(token)) return [];
-  if (draft.size === "tiny" && token.size !== "tiny" && tinyIdsAt(scene, token.x, token.y, id).length >= TINY_PER_CELL) return null;
+  if (draft.size === "tiny" && token.size !== "tiny" && tinyIdsAt(scene, token.x, token.y, id).length >= TINY_PER_CELL) return "tinyFull";
   const renamed = draft.name.trim() === token.name ? { name: token.name, renames: [] } : tokenName(scene, draft.name, id);
   const edited: Token = { ...token, name: renamed.name, side: draft.side, size: draft.size };
-  if (!isToken(edited)) return [];
+  // Side and size come from the catalog and the name is cut to fit, so only a space too large for the place can fail.
+  if (!isToken(edited)) return "outOfRange";
   const patch = renamePatch(scene, renamed.renames);
   if (edited.name !== token.name || edited.side !== token.side || edited.size !== token.size) patch.push(["tokens", id, edited]);
   return patch;
@@ -128,7 +132,7 @@ export function editTokenPatch(scene: Scene, id: string, draft: TokenDraft): Pat
  * The square a token covers in world coordinates. A tiny token takes the quarter of its cell given by its
  * slot: the tiny tokens of one cell by key order fill the top left, top right, bottom left, bottom right.
  */
-export function tokenSquare(token: Token, slot: number): CellSquare {
+function tokenSquare(token: Token, slot: number): CellSquare {
   if (token.size !== "tiny") return { x: token.x, y: token.y, size: sizeSpan(token.size) };
   const quarter = slot % TINY_PER_CELL;
   return { x: token.x + (quarter % 2) / 2, y: token.y + Math.floor(quarter / 2) / 2, size: 0.5 };
@@ -177,19 +181,25 @@ export function objectAt(scene: Scene, cell: Point): string | null {
   return found;
 }
 
+/** Whether a cell is out of range or already holds an object of the type other than `self`. */
+function isObjectCellTaken(scene: Scene, type: ObjectType, cell: Point, self: string | null): boolean {
+  if (!isCellInRange(cell.x, cell.y)) return true;
+  return Object.entries(scene.objects).some(
+    ([id, item]) => id !== self && isMapObject(item) && item.type === type && item.x === cell.x && item.y === cell.y,
+  );
+}
+
 /** Puts an object in a cell; empty when the cell already holds one of that type or is out of range. */
 export function placeObjectPatch(scene: Scene, id: string, type: ObjectType, cell: Point): Patch {
-  if (!isCellInRange(cell.x, cell.y)) return [];
-  for (const item of Object.values(scene.objects)) {
-    if (isMapObject(item) && item.type === type && item.x === cell.x && item.y === cell.y) return [];
-  }
+  if (isObjectCellTaken(scene, type, cell, null)) return [];
   const item: MapObject = { type, x: cell.x, y: cell.y };
   return [["objects", id, item]];
 }
 
+/** Moves an object to a cell; empty, as when placing, when the cell holds one of that type or is out of range. */
 export function moveObjectPatch(scene: Scene, id: string, cell: Point): Patch {
   const item = scene.objects[id];
-  if (!isMapObject(item) || (item.x === cell.x && item.y === cell.y) || !isCellInRange(cell.x, cell.y)) return [];
+  if (!isMapObject(item) || (item.x === cell.x && item.y === cell.y) || isObjectCellTaken(scene, item.type, cell, id)) return [];
   return [["objects", id, { ...item, x: cell.x, y: cell.y }]];
 }
 

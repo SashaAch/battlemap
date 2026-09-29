@@ -60,7 +60,7 @@ const TOOL_KEYS: Record<string, Tool> = {
 };
 
 /** A selected token or object: Delete removes it. */
-export interface Selection {
+interface Selection {
   collection: "tokens" | "objects";
   id: string;
 }
@@ -537,7 +537,8 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
 
   window.addEventListener("keyup", (e) => {
     if (e.code !== "Space" || isTextEntry(e.target)) return;
-    e.preventDefault(); // keeps a focused button from being pressed by the space bar
+    // Keeps a focused toolbar button from being pressed by the space bar; in the token editor it presses buttons as usual.
+    if (!isInDialog(e.target)) e.preventDefault();
     spaceHeld = false;
     updateCursor();
   });

@@ -6,7 +6,7 @@ import { cellKey } from "./geometry.ts";
 import type { Point } from "./geometry.ts";
 import type { DiagonalRule } from "./store.ts";
 
-export const FEET_PER_CELL = 5;
+const FEET_PER_CELL = 5;
 
 /**
  * Cells from `from` (excluded) to `to` (included), each a step to a neighbour, diagonals included:
@@ -23,17 +23,28 @@ export function stepsBetween(from: Point, to: Point): Point[] {
   return steps;
 }
 
+const isStraightStep = (a: Point, b: Point): boolean => Math.abs(a.x - b.x) + Math.abs(a.y - b.y) === 1;
+const isDiagonalStep = (a: Point, b: Point): boolean => Math.abs(a.x - b.x) === 1 && Math.abs(a.y - b.y) === 1;
+
 /**
- * The path of a dragged token after the pointer reaches `target` (Р40): the steps to it are added one by one,
- * and a step onto a place already on the path cuts the path back to that place, so going back costs nothing.
+ * The path of a dragged token after the pointer reaches `target`: the steps to it are added one by one.
+ * A step onto a place already on the path cuts the path back to that place, so going back costs nothing (Р40).
+ * Two straight steps turning a corner, A→B→C with C diagonal to A, are the hand brushing the cell at the corner
+ * of a diagonal: B is dropped and A→C is one diagonal step.
  * Returns a new path; `path` must hold at least the starting place.
  */
 export function extendPath(path: readonly Point[], target: Point): Point[] {
   const next = [...path];
   for (const step of stepsBetween(next[next.length - 1], target)) {
     const seen = next.findIndex((place) => place.x === step.x && place.y === step.y);
-    if (seen >= 0) next.length = seen + 1;
-    else next.push(step);
+    if (seen >= 0) {
+      next.length = seen + 1;
+      continue;
+    }
+    const a = next[next.length - 2];
+    const b = next[next.length - 1];
+    if (a && isStraightStep(a, b) && isStraightStep(b, step) && isDiagonalStep(a, step)) next.pop();
+    next.push(step);
   }
   return next;
 }

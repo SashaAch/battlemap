@@ -91,6 +91,7 @@ export const ru = {
   "measure.ruler": "{feet} фт · {cells} кл.",
   "measure.cost": "{feet} фт",
   "notice.tinyFull": "В клетке уже четыре крошечные фишки, пятая не помещается.",
+  "notice.tokenOutOfRange": "Фишка такого размера здесь не помещается: её место выходит за край карты. Сначала сдвиньте её.",
 
   "edge.wall": "Стена",
   "edge.door": "Дверь",

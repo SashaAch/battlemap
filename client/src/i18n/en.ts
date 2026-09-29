@@ -93,6 +93,7 @@ export const en: Record<keyof typeof ru, string> = {
   "measure.ruler": "{feet} ft · {cells} sq.",
   "measure.cost": "{feet} ft",
   "notice.tinyFull": "This square already holds four tiny tokens; a fifth does not fit.",
+  "notice.tokenOutOfRange": "A token of this size does not fit here: its space goes past the edge of the map. Move it first.",
 
   "edge.wall": "Wall",
   "edge.door": "Door",

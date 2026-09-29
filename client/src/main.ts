@@ -459,9 +459,10 @@ tokenForm.addEventListener("submit", (e) => {
   const button = e.submitter;
   if (id === null || !(button instanceof HTMLButtonElement) || button.value !== "save") return;
   if (!isSideId(editSide.value) || !isSizeId(editSize.value)) return;
-  const patch = editTokenPatch(board.scene, id, { side: editSide.value, size: editSize.value, name: editName.value });
-  if (patch === null) showNotice("notice.tinyFull");
-  else commit(patch);
+  const result = editTokenPatch(board.scene, id, { side: editSide.value, size: editSize.value, name: editName.value });
+  if (result === "tinyFull") showNotice("notice.tinyFull");
+  else if (result === "outOfRange") showNotice("notice.tokenOutOfRange");
+  else commit(result);
 });
 
 updateObjectButtons();

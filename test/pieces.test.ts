@@ -151,7 +151,7 @@ describe("tiny tokens", () => {
     place(scene, "e", tiny, 3, 3);
     place(scene, "m", { ...goblin, size: "medium" }, 2, 2);
     assert.equal(moveTokenPatch(scene, "e", { x: 2, y: 2 }), null);
-    assert.equal(editTokenPatch(scene, "m", { ...goblin, size: "tiny" }), null);
+    assert.equal(editTokenPatch(scene, "m", { ...goblin, size: "tiny" }), "tinyFull");
     // One of the four stays in its full cell without a change and may leave it.
     assert.deepEqual(moveTokenPatch(scene, "a", { x: 2, y: 2 }), []);
     assert.ok(moveTokenPatch(scene, "a", { x: 4, y: 4 }));
@@ -175,13 +175,20 @@ describe("moving, editing and finding tokens", () => {
     place(scene, "a", goblin);
     place(scene, "b", { ...goblin, name: "Орк" }, 1);
     const patch = editTokenPatch(scene, "b", { name: "Гоблин", side: "allies", size: "large" });
-    assert.ok(patch);
+    assert.ok(Array.isArray(patch));
     applyPatch(scene, patch);
     assert.deepEqual(names(scene), ["Гоблин 1", "Гоблин 2"]);
     const b = scene.tokens.b as Token;
     assert.equal(b.name, "Гоблин 2");
     assert.equal(b.side, "allies");
     assert.equal(b.size, "large");
+  });
+
+  test("growing a token past the end of the key range is refused with a reason", () => {
+    const scene = newScene();
+    place(scene, "a", goblin, 9998, 0);
+    assert.equal(editTokenPatch(scene, "a", { ...goblin, size: "huge" }), "outOfRange");
+    assert.ok(Array.isArray(editTokenPatch(scene, "a", { ...goblin, size: "large" })));
   });
 
   test("editing without changes gives nothing and keeps the number", () => {
@@ -222,6 +229,16 @@ describe("objects", () => {
     assert.equal(objectAt(scene, { x: 1, y: 2 }), "o1");
     assert.equal(objectAt(scene, { x: 0, y: 0 }), null);
     assert.deepEqual(placeObjectPatch(scene, "o3", "pit", { x: 10000, y: 0 }), []);
+  });
+
+  test("are not moved onto a cell with one of the same type, as when placing", () => {
+    const scene = newScene();
+    applyPatch(scene, placeObjectPatch(scene, "o1", "barrel", { x: 0, y: 0 }));
+    applyPatch(scene, placeObjectPatch(scene, "o2", "barrel", { x: 1, y: 0 }));
+    applyPatch(scene, placeObjectPatch(scene, "o3", "crate", { x: 2, y: 0 }));
+    assert.deepEqual(moveObjectPatch(scene, "o2", { x: 0, y: 0 }), []);
+    assert.deepEqual(moveObjectPatch(scene, "o2", { x: 2, y: 0 }), [["objects", "o2", { type: "barrel", x: 2, y: 0 }]]);
+    assert.deepEqual(moveObjectPatch(scene, "o2", { x: 0, y: 10000 }), []);
   });
 });
 

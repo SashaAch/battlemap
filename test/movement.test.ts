@@ -160,9 +160,39 @@ describe("the path of a dragged token (Р40)", () => {
   });
 
   test("crossing the path somewhere else cuts the loop", () => {
-    // Around a square and back into the second cell of the path.
+    // Around a square and back into the second cell of the path; the loop goes, then the corner 0,0 → 1,0 → 1,-1 is cut too.
     const path = drag({ x: 0, y: 0 }, [1, 0], [2, 0], [2, 1], [1, 1], [1, 0], [1, -1]);
-    assert.deepEqual(path, walk({ x: 0, y: 0 }, [1, 0], [1, -1]));
+    assert.deepEqual(path, walk({ x: 0, y: 0 }, [1, -1]));
+    const straightOn = drag({ x: 0, y: 0 }, [1, 0], [2, 0], [2, 1], [1, 1], [1, 0], [2, 0], [3, 0]);
+    assert.deepEqual(straightOn, walk({ x: 0, y: 0 }, [1, 0], [2, 0], [3, 0]));
+  });
+
+  test("a staircase drawn towards 3,3 is taken for diagonals: 15 ft by the core rule, 20 ft by 5/10/5", () => {
+    const path = drag({ x: 0, y: 0 }, [1, 0], [1, 1], [2, 1], [2, 2], [3, 2], [3, 3]);
+    assert.deepEqual(path, diagonal3);
+    assert.equal(pathCost({}, path, 1, "5"), 15);
+    assert.equal(pathCost({}, path, 1, "5-10-5"), 20);
+  });
+
+  test("a corner brushed on the other side is cut too", () => {
+    assert.deepEqual(drag({ x: 0, y: 0 }, [0, 1], [1, 1]), walk({ x: 0, y: 0 }, [1, 1]));
+  });
+
+  test("straight steps that do not turn a corner are kept, and so is a diagonal followed by a straight step", () => {
+    assert.deepEqual(drag({ x: 0, y: 0 }, [1, 0], [2, 0], [3, 0]), walk({ x: 0, y: 0 }, [1, 0], [2, 0], [3, 0]));
+    assert.deepEqual(drag({ x: 0, y: 0 }, [1, 1], [2, 1]), walk({ x: 0, y: 0 }, [1, 1], [2, 1]));
+    // Only the corner 1,0 → 2,0 → 2,1 is cut; 0,0 → 1,0 → 2,0 runs straight and stays.
+    assert.deepEqual(drag({ x: 0, y: 0 }, [1, 0], [2, 0], [2, 1], [2, 2]), walk({ x: 0, y: 0 }, [1, 0], [2, 1], [2, 2]));
+  });
+
+  test("the corner cut and the cut on return work together", () => {
+    const there = drag({ x: 0, y: 0 }, [1, 0], [1, 1], [2, 1], [2, 2]);
+    assert.deepEqual(there, walk({ x: 0, y: 0 }, [1, 1], [2, 2]));
+    assert.deepEqual(extendPath(there, { x: 1, y: 1 }), walk({ x: 0, y: 0 }, [1, 1]));
+    // Back to the start through the dropped corner cell: 1,0 is not on the path any more, 0,0 is.
+    const home = drag({ x: 0, y: 0 }, [1, 0], [1, 1], [1, 0], [0, 0]);
+    assert.deepEqual(home, [{ x: 0, y: 0 }]);
+    assert.equal(pathCost({}, home, 1, "5"), 0);
   });
 
   test("the path given is not changed", () => {
