@@ -37,17 +37,28 @@ const TABLE_COLUMNS = {
   users: ["id", "login", "display_name", "pass_hash", "pass_salt", "pass_params", "pass_version", "role", "must_change_password", "disabled", "settings_json", "created_at"],
   sessions: ["token_hash", "user_id", "pass_version", "expires_at"],
   invites: ["code_hash", "kind", "game_id", "created_by", "expires_at", "max_uses", "uses"],
+  games: ["id", "title", "kind", "owner_id", "gm_id", "active_scene_id", "created_at"],
+  members: ["game_id", "user_id", "role", "joined_at"],
+  scenes: ["id", "game_id", "name", "visible", "state_json", "version", "updated_at"],
 };
 
+/** A user row as migration 1 made it; test data, not a real password hash. */
+function insertRawUser(db: DatabaseSync, login: string): void {
+  db.prepare(
+    `INSERT INTO users (login, display_name, pass_hash, pass_salt, pass_params, role, created_at)
+     VALUES (?, ?, zeroblob(64), zeroblob(16), 'scrypt:32768:8:1', 'user', 1)`,
+  ).run(login, login.toUpperCase());
+}
+
 describe("migrations", () => {
-  test("a version 0 database reaches version 1 with the tables of plan 6.5", () => {
+  test("a version 0 database reaches the last version with the tables of plan 6.5", () => {
     new DatabaseSync(file).close();
     assert.equal(inspect().version, 0);
 
     new Database(file).close();
 
-    assert.equal(inspect().version, 1);
-    assert.equal(MIGRATIONS.length, 1);
+    assert.equal(inspect().version, 2);
+    assert.equal(MIGRATIONS.length, 2);
     const db = new DatabaseSync(file);
     try {
       for (const [table, columns] of Object.entries(TABLE_COLUMNS)) {
@@ -57,6 +68,39 @@ describe("migrations", () => {
     } finally {
       db.close();
     }
+  });
+
+  test("a version 1 database with users and codes reaches version 2 without losing them", () => {
+    const old = new DatabaseSync(file);
+    runMigrations(old, MIGRATIONS.slice(0, 1));
+    insertRawUser(old, "anna");
+    insertRawUser(old, "boris");
+    old.prepare("INSERT INTO invites (code_hash, kind, created_by, expires_at, max_uses) VALUES (zeroblob(32), 'register', 1, 100, 3)").run();
+    const users = old.prepare("SELECT * FROM users ORDER BY id").all();
+    const invites = old.prepare("SELECT * FROM invites").all();
+    old.close();
+    assert.equal(inspect().version, 1);
+
+    const db = new Database(file);
+    try {
+      assert.equal(db.findUserByLogin("boris")?.displayName, "BORIS");
+      assert.equal(db.hasInvite(new Uint8Array(32), "register", 50), true);
+      assert.deepEqual(db.listUserGames(1), []);
+    } finally {
+      db.close();
+    }
+    const upgraded = inspect();
+    assert.equal(upgraded.version, 2);
+    const after = new DatabaseSync(file);
+    try {
+      assert.deepEqual(after.prepare("SELECT * FROM users ORDER BY id").all(), users);
+      assert.deepEqual(after.prepare("SELECT * FROM invites").all(), invites);
+    } finally {
+      after.close();
+    }
+
+    new Database(file).close();
+    assert.deepEqual(inspect(), upgraded, "a second start changes nothing");
   });
 
   test("running the migrations again changes nothing, data included", () => {
@@ -90,7 +134,7 @@ describe("migrations", () => {
     const db = new DatabaseSync(file);
     try {
       assert.throws(() => runMigrations(db, [...MIGRATIONS, "CREATE TABLE extra (x); SELECT * FROM missing;"]));
-      assert.equal(Number(db.prepare("PRAGMA user_version").get()?.user_version), 1);
+      assert.equal(Number(db.prepare("PRAGMA user_version").get()?.user_version), MIGRATIONS.length);
       assert.equal(db.prepare("SELECT name FROM sqlite_schema WHERE name = 'extra'").get(), undefined);
     } finally {
       db.close();
@@ -132,6 +176,40 @@ describe("queries", () => {
       assert.equal(db.useInvite(fresh, "register", 50), false);
       db.deleteExpired(50);
       assert.equal(db.useInvite(stale, "register", 5), false, "expired invites are removed");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an expired game invite outlives the clean-up at start, so it still reads as expired; a used-up one goes", () => {
+    let db = new Database(file);
+    const admin = db.insertUser({
+      login: "admin",
+      displayName: "A",
+      passHash: new Uint8Array(64),
+      passSalt: new Uint8Array(16),
+      passParams: "scrypt:32768:8:1",
+      role: "admin",
+      mustChangePassword: false,
+      createdAt: 0,
+    });
+    const game = db.insertGame("Игра", "gm", admin.id, admin.id, 0);
+    const [expired, usedUp, register] = [1, 2, 3].map((n) => new Uint8Array(32).fill(n));
+    db.insertInvite(expired, "game", game.id, admin.id, 10, 5);
+    db.insertInvite(usedUp, "game", game.id, admin.id, 100, 1);
+    assert.equal(db.useInvite(usedUp, "game", 5), true);
+    db.insertInvite(register, "register", null, admin.id, 10, 5);
+    db.close();
+
+    // A restart: the server opens the database again and cleans up.
+    db = new Database(file);
+    try {
+      db.deleteExpired(50);
+      assert.deepEqual(db.findGameInvite(expired), { gameId: game.id, expiresAt: 10, uses: 0, maxUses: 5 });
+      assert.equal(db.findGameInvite(usedUp), undefined);
+      assert.equal(db.hasInvite(register, "register", 5), false, "an expired registration code goes as before");
+      db.deleteGameInvites(game.id);
+      assert.equal(db.findGameInvite(expired), undefined);
     } finally {
       db.close();
     }

@@ -44,6 +44,39 @@ export const MIGRATIONS: readonly string[] = [
     uses INTEGER NOT NULL DEFAULT 0 CHECK (uses >= 0)
   ) STRICT;
   `,
+  // Stage 5: games, their members and scenes (plan 5.11, 6.5). A personal campaign has no master (gm_id NULL);
+  // scenes.version counts the saved changes of state_json.
+  `
+  CREATE TABLE games (
+    id INTEGER PRIMARY KEY,
+    title TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('gm', 'personal')),
+    owner_id INTEGER NOT NULL REFERENCES users (id),
+    gm_id INTEGER REFERENCES users (id),
+    active_scene_id INTEGER,
+    created_at INTEGER NOT NULL
+  ) STRICT;
+
+  CREATE TABLE members (
+    game_id INTEGER NOT NULL REFERENCES games (id),
+    user_id INTEGER NOT NULL REFERENCES users (id),
+    role TEXT NOT NULL CHECK (role IN ('gm', 'player')),
+    joined_at INTEGER NOT NULL,
+    PRIMARY KEY (game_id, user_id)
+  ) STRICT;
+  CREATE INDEX members_by_user ON members (user_id);
+
+  CREATE TABLE scenes (
+    id INTEGER PRIMARY KEY,
+    game_id INTEGER NOT NULL REFERENCES games (id),
+    name TEXT NOT NULL,
+    visible INTEGER NOT NULL DEFAULT 0 CHECK (visible IN (0, 1)),
+    state_json TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+  ) STRICT;
+  CREATE INDEX scenes_by_game ON scenes (game_id);
+  `,
 ];
 
 /** Brings the schema up to `migrations.length`; refuses a database written by a newer server. */
@@ -109,7 +142,81 @@ export interface Session {
   expiresAt: number;
 }
 
+/** A game with a master, or a personal campaign of its owner (plan 5.11, R24). */
+export type GameKind = "gm" | "personal";
+export type MemberRole = "gm" | "player";
+
+export interface Game {
+  id: number;
+  title: string;
+  kind: GameKind;
+  ownerId: number;
+  /** Null in a personal campaign until the owner names a master. */
+  gmId: number | null;
+  activeSceneId: number | null;
+  createdAt: number;
+}
+
+/** A game in the list of a user's games, with the user's role in it. */
+export interface MyGame extends Game {
+  role: MemberRole;
+}
+
+export interface Member {
+  userId: number;
+  displayName: string;
+  role: MemberRole;
+  joinedAt: number;
+}
+
+export interface SceneInfo {
+  id: number;
+  gameId: number;
+  name: string;
+  visible: boolean;
+  /** Goes up with every saved change of the scene state. */
+  version: number;
+  updatedAt: number;
+}
+
+export interface SceneRecord extends SceneInfo {
+  /** The scene (plan 6.1) as JSON text. */
+  stateJson: string;
+}
+
+export interface GameInvite {
+  gameId: number;
+  expiresAt: number;
+  uses: number;
+  maxUses: number;
+}
+
 type Row = Record<string, SQLOutputValue>;
+
+function toGame(row: Row): Game {
+  return {
+    id: Number(row.id),
+    title: String(row.title),
+    kind: row.kind === "personal" ? "personal" : "gm",
+    ownerId: Number(row.owner_id),
+    gmId: row.gm_id === null ? null : Number(row.gm_id),
+    activeSceneId: row.active_scene_id === null ? null : Number(row.active_scene_id),
+    createdAt: Number(row.created_at),
+  };
+}
+
+const toRole = (value: SQLOutputValue): MemberRole => (value === "gm" ? "gm" : "player");
+
+function toSceneInfo(row: Row): SceneInfo {
+  return {
+    id: Number(row.id),
+    gameId: Number(row.game_id),
+    name: String(row.name),
+    visible: row.visible === 1,
+    version: Number(row.version),
+    updatedAt: Number(row.updated_at),
+  };
+}
 
 function toUser(row: Row): User {
   return {
@@ -332,9 +439,155 @@ export class Database {
     return changed === 1;
   }
 
-  /** Drops expired sessions and invites, and invites with no uses left. */
+  /** A game invite by the hash of its code, also when it has expired or has no uses left. */
+  findGameInvite(codeHash: Uint8Array): GameInvite | undefined {
+    const row = this.#get("SELECT game_id, expires_at, uses, max_uses FROM invites WHERE code_hash = ? AND kind = 'game'", codeHash);
+    return (
+      row && { gameId: Number(row.game_id), expiresAt: Number(row.expires_at), uses: Number(row.uses), maxUses: Number(row.max_uses) }
+    );
+  }
+
+  deleteGameInvites(gameId: number): void {
+    this.#run("DELETE FROM invites WHERE kind = 'game' AND game_id = ?", gameId);
+  }
+
+  // ---- games and members ----
+
+  insertGame(title: string, kind: GameKind, ownerId: number, gmId: number | null, createdAt: number): Game {
+    const row = this.#get(
+      "INSERT INTO games (title, kind, owner_id, gm_id, created_at) VALUES (?, ?, ?, ?, ?) RETURNING *",
+      title,
+      kind,
+      ownerId,
+      gmId,
+      createdAt,
+    );
+    if (!row) throw new Error("INSERT ... RETURNING gave no row");
+    return toGame(row);
+  }
+
+  findGame(id: number): Game | undefined {
+    const row = this.#get("SELECT * FROM games WHERE id = ?", id);
+    return row && toGame(row);
+  }
+
+  /** The games the user is a member of, newest first. */
+  listUserGames(userId: number): MyGame[] {
+    return this.#all(
+      `SELECT games.*, members.role AS member_role FROM games JOIN members ON members.game_id = games.id
+       WHERE members.user_id = ? ORDER BY games.created_at DESC, games.id DESC`,
+      userId,
+    ).map((row) => ({ ...toGame(row), role: toRole(row.member_role) }));
+  }
+
+  /** Null leaves a personal campaign without a master. */
+  setGameMaster(gameId: number, gmId: number | null): void {
+    this.#run("UPDATE games SET gm_id = ? WHERE id = ?", gmId, gameId);
+  }
+
+  setActiveScene(gameId: number, sceneId: number): void {
+    this.#run("UPDATE games SET active_scene_id = ? WHERE id = ?", sceneId, gameId);
+  }
+
+  /** The game with its members, scenes and invites. */
+  deleteGame(gameId: number): void {
+    this.deleteGameInvites(gameId);
+    this.#run("DELETE FROM scenes WHERE game_id = ?", gameId);
+    this.#run("DELETE FROM members WHERE game_id = ?", gameId);
+    this.#run("DELETE FROM games WHERE id = ?", gameId);
+  }
+
+  findMemberRole(gameId: number, userId: number): MemberRole | undefined {
+    const row = this.#get("SELECT role FROM members WHERE game_id = ? AND user_id = ?", gameId, userId);
+    return row && toRole(row.role);
+  }
+
+  listMembers(gameId: number): Member[] {
+    return this.#all(
+      `SELECT members.user_id, users.display_name, members.role, members.joined_at FROM members
+       JOIN users ON users.id = members.user_id WHERE members.game_id = ? ORDER BY members.joined_at, members.user_id`,
+      gameId,
+    ).map((row) => ({
+      userId: Number(row.user_id),
+      displayName: String(row.display_name),
+      role: toRole(row.role),
+      joinedAt: Number(row.joined_at),
+    }));
+  }
+
+  /** Adds a member; false when the user already is one (nothing changes then). */
+  insertMember(gameId: number, userId: number, role: MemberRole, joinedAt: number): boolean {
+    const changed = this.#run(
+      "INSERT INTO members (game_id, user_id, role, joined_at) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING",
+      gameId,
+      userId,
+      role,
+      joinedAt,
+    );
+    return changed === 1;
+  }
+
+  setMemberRole(gameId: number, userId: number, role: MemberRole): void {
+    this.#run("UPDATE members SET role = ? WHERE game_id = ? AND user_id = ?", role, gameId, userId);
+  }
+
+  deleteMember(gameId: number, userId: number): void {
+    this.#run("DELETE FROM members WHERE game_id = ? AND user_id = ?", gameId, userId);
+  }
+
+  // ---- scenes ----
+
+  insertScene(gameId: number, name: string, stateJson: string, updatedAt: number): SceneInfo {
+    const row = this.#get(
+      "INSERT INTO scenes (game_id, name, state_json, updated_at) VALUES (?, ?, ?, ?) RETURNING *",
+      gameId,
+      name,
+      stateJson,
+      updatedAt,
+    );
+    if (!row) throw new Error("INSERT ... RETURNING gave no row");
+    return toSceneInfo(row);
+  }
+
+  /** A scene of this game; a scene of another game is not found. */
+  findScene(gameId: number, sceneId: number): SceneRecord | undefined {
+    const row = this.#get("SELECT * FROM scenes WHERE id = ? AND game_id = ?", sceneId, gameId);
+    return row && { ...toSceneInfo(row), stateJson: String(row.state_json) };
+  }
+
+  /** The scenes of a game without their state, oldest first. */
+  listScenes(gameId: number): SceneInfo[] {
+    return this.#all("SELECT id, game_id, name, visible, version, updated_at FROM scenes WHERE game_id = ? ORDER BY id", gameId).map(
+      toSceneInfo,
+    );
+  }
+
+  renameScene(sceneId: number, name: string): void {
+    this.#run("UPDATE scenes SET name = ? WHERE id = ?", name, sceneId);
+  }
+
+  setSceneVisible(sceneId: number, visible: boolean): void {
+    this.#run("UPDATE scenes SET visible = ? WHERE id = ?", flag(visible), sceneId);
+  }
+
+  /** Saves a changed state; returns the new version. */
+  saveSceneState(sceneId: number, stateJson: string, updatedAt: number): number {
+    const row = this.#get(
+      "UPDATE scenes SET state_json = ?, version = version + 1, updated_at = ? WHERE id = ? RETURNING version",
+      stateJson,
+      updatedAt,
+      sceneId,
+    );
+    if (!row) throw new Error(`scene ${sceneId} is missing`);
+    return Number(row.version);
+  }
+
+  /**
+   * Drops expired sessions, invites with no uses left and expired registration codes. An expired game invite
+   * stays, so joining with it keeps answering 410 after a restart; it goes with its game or when a member is removed.
+   */
   deleteExpired(now: number): void {
     this.#run("DELETE FROM sessions WHERE expires_at <= ?", now);
-    this.#run("DELETE FROM invites WHERE expires_at <= ? OR uses >= max_uses", now);
+    this.#run("DELETE FROM invites WHERE uses >= max_uses OR (expires_at <= ? AND kind = 'register')", now);
   }
 }

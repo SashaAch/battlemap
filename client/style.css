@@ -406,3 +406,119 @@ button.primary:hover:not(:disabled) {
   align-items: center;
   gap: 8px;
 }
+
+/* ---- games (app/games.ts, app/game.ts) ---- */
+
+.muted {
+  color: var(--ui-muted);
+}
+
+.game-list,
+.scene-list,
+.member-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.game-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.game-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* The panel of an open game: at the right of the board, under the toolbar; the board stays usable beside it. */
+.game-panel {
+  position: relative;
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
+  align-self: start;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 320px;
+  max-width: 50vw;
+  max-height: 100%;
+  overflow-y: auto;
+  padding: 10px;
+  background: var(--ui-bg);
+  border: 0 solid var(--ui-border);
+  border-width: 0 0 1px 1px;
+}
+
+.game-panel[hidden] {
+  display: none;
+}
+
+.game-panel h2,
+.game-panel h3,
+.game-panel p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.game-panel h2 {
+  font-size: 16px;
+}
+
+.game-panel h3 {
+  margin-bottom: 6px;
+  font-size: 14px;
+}
+
+.game-panel input[type="number"] {
+  width: 6em;
+}
+
+.game-panel input[type="text"] {
+  max-width: 100%;
+}
+
+.scene-list li,
+.member-list li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+}
+
+.scene-name {
+  max-width: 100%;
+  font-weight: 600;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.member-name {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.badge {
+  padding: 2px 8px;
+  border-radius: 10px;
+  color: var(--ui-accent-fg);
+  background: var(--ui-accent);
+}
+
+/* A read-only board (a player): no terrain to paint, nothing to undo. */
+.read-only .palette,
+.read-only #undo,
+.read-only #redo {
+  display: none;
+}

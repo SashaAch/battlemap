@@ -12,8 +12,9 @@ import type { TLSSocket } from "node:tls";
 import { Accounts, checkSettings, meView, SESSION_COOKIE, SESSION_LIFETIME_MS, userView } from "./auth.ts";
 import type { Authenticated } from "./auth.ts";
 import { Database } from "./db.ts";
-import type { Role } from "./db.ts";
+import type { GameKind, Role, User } from "./db.ts";
 import { ApiError } from "./errors.ts";
+import { Games } from "./games.ts";
 import {
   booleanField,
   cookieHeader,
@@ -65,6 +66,8 @@ export interface RunningServer {
 
 interface Call {
   body: Record<string, unknown>;
+  /** The `:name` parts of the route path (see matchRoute). */
+  params: Record<string, string>;
   /** Set for every route but `anyone`, which may still get a session. */
   auth: Authenticated | null;
   address: string;
@@ -96,8 +99,48 @@ function signedIn(call: Call): Authenticated {
   return call.auth;
 }
 
-function makeRoutes(accounts: Accounts, settings: SettingsFile): Map<string, Route> {
+function gameKindField(body: Record<string, unknown>): GameKind {
+  if (body.kind !== "gm" && body.kind !== "personal") throw new ApiError("request.format");
+  return body.kind;
+}
+
+/** A path part that is a record id: 1 and up, at most 15 digits, so it is a safe integer. */
+const ID_PART = /^[1-9][0-9]{0,14}$/;
+/** A path part that is an invite code. */
+const CODE_PART = /^[a-z0-9]{1,64}$/;
+
+/**
+ * Finds the route for a method and path. A route path part `:code` matches an invite code, any other `:name`
+ * a record id; anything else must be equal. No route, including a malformed id, is 404.
+ */
+function matchRoute(routes: Map<string, Route>, method: string, urlPath: string): { route: Route; params: Record<string, string> } | null {
+  // A path with ":" is never looked up as is: a literal `/api/join/:code` must not reach a route without its parameters.
+  const exact = urlPath.includes(":") ? undefined : routes.get(`${method} ${urlPath}`);
+  if (exact) return { route: exact, params: {} };
+  const parts = urlPath.split("/");
+  for (const [key, route] of routes) {
+    const [routeMethod, routePath] = key.split(" ");
+    const routeParts = routePath.split("/");
+    if (routeMethod !== method || routeParts.length !== parts.length || !routePath.includes(":")) continue;
+    const params: Record<string, string> = {};
+    const matches = routeParts.every((part, index) => {
+      if (!part.startsWith(":")) return part === parts[index];
+      const name = part.slice(1);
+      params[name] = parts[index];
+      return (name === "code" ? CODE_PART : ID_PART).test(parts[index]);
+    });
+    if (matches) return { route, params };
+  }
+  return null;
+}
+
+const idParam = (call: Call, name: string): number => Number(call.params[name]);
+
+function makeRoutes(accounts: Accounts, settings: SettingsFile, games: Games): Map<string, Route> {
   const openRegistration = (): boolean => settings.current.openRegistration;
+  const user = (call: Call): User => signedIn(call).user;
+  const gameId = (call: Call): number => idParam(call, "id");
+  const sceneId = (call: Call): number => idParam(call, "sid");
 
   return new Map<string, Route>([
     [
@@ -226,6 +269,174 @@ function makeRoutes(accounts: Accounts, settings: SettingsFile): Map<string, Rou
         },
       },
     ],
+    // ---- games (plan 5.11, 6.4); games.ts checks the rights in the game ----
+    [
+      "GET /api/games",
+      {
+        access: "user",
+        handle(call) {
+          return { status: 200, body: { games: games.listGames(user(call)) } };
+        },
+      },
+    ],
+    [
+      "POST /api/games",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          return { status: 201, body: games.createGame(user(call), stringField(call.body, "title"), gameKindField(call.body)) };
+        },
+      },
+    ],
+    [
+      "GET /api/games/:id",
+      {
+        access: "user",
+        handle(call) {
+          return { status: 200, body: games.getGame(user(call), gameId(call)) };
+        },
+      },
+    ],
+    [
+      "DELETE /api/games/:id",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          games.deleteGame(user(call), gameId(call));
+          return { status: 204 };
+        },
+      },
+    ],
+    [
+      "POST /api/games/:id/invites",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          return { status: 201, body: games.createInvite(user(call), gameId(call), idField(call.body, "maxUses"), idField(call.body, "days")) };
+        },
+      },
+    ],
+    [
+      "POST /api/join/:code",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          return { status: 200, body: games.join(user(call), call.params.code, call.address) };
+        },
+      },
+    ],
+    [
+      "POST /api/games/:id/master",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          games.setMaster(user(call), gameId(call), idField(call.body, "userId"));
+          return { status: 200, body: games.getGame(user(call), gameId(call)) };
+        },
+      },
+    ],
+    [
+      "DELETE /api/games/:id/master",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          games.takeMastery(user(call), gameId(call));
+          return { status: 200, body: games.getGame(user(call), gameId(call)) };
+        },
+      },
+    ],
+    [
+      "POST /api/games/:id/leave",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          games.leave(user(call), gameId(call));
+          return { status: 204 };
+        },
+      },
+    ],
+    [
+      "DELETE /api/games/:id/members/:user",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          games.removeMember(user(call), gameId(call), idParam(call, "user"));
+          return { status: 204 };
+        },
+      },
+    ],
+    [
+      "GET /api/games/:id/scenes",
+      {
+        access: "user",
+        handle(call) {
+          return { status: 200, body: { scenes: games.listScenes(user(call), gameId(call)) } };
+        },
+      },
+    ],
+    [
+      "POST /api/games/:id/scenes",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          return { status: 201, body: games.createScene(user(call), gameId(call), stringField(call.body, "name")) };
+        },
+      },
+    ],
+    [
+      "GET /api/games/:id/scenes/:sid",
+      {
+        access: "user",
+        handle(call) {
+          return { status: 200, body: games.getScene(user(call), gameId(call), sceneId(call)) };
+        },
+      },
+    ],
+    [
+      "PUT /api/games/:id/scenes/:sid",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          const { body } = call;
+          const change = {
+            name: optionalStringField(body, "name"),
+            visible: body.visible === undefined ? undefined : booleanField(body, "visible"),
+          };
+          return { status: 200, body: games.updateScene(user(call), gameId(call), sceneId(call), change) };
+        },
+      },
+    ],
+    [
+      "POST /api/games/:id/scenes/:sid/patch",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          return { status: 200, body: games.patchScene(user(call), gameId(call), sceneId(call), call.body.patch) };
+        },
+      },
+    ],
+    [
+      "POST /api/games/:id/scenes/:sid/activate",
+      {
+        access: "user",
+        limit: BODY_LIMIT,
+        handle(call) {
+          games.activateScene(user(call), gameId(call), sceneId(call));
+          return { status: 204 };
+        },
+      },
+    ],
     [
       "GET /api/admin/settings",
       {
@@ -266,12 +477,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     db.deleteExpired(now());
     const accounts = new Accounts(db, now);
     setupToken = accounts.startSetup();
-    const routes = makeRoutes(accounts, settings);
+    const routes = makeRoutes(accounts, settings, new Games(db, now));
     const hosts = new HostCheck(settings.current.allowedHosts);
 
     const handleApi = async (req: IncomingMessage, res: ServerResponse, urlPath: string, secure: boolean): Promise<void> => {
-      const route = routes.get(`${req.method} ${urlPath}`);
-      if (!route) throw new ApiError("request.notFound");
+      const found = matchRoute(routes, req.method ?? "", urlPath);
+      if (!found) throw new ApiError("request.notFound");
+      const { route, params } = found;
 
       // Forged requests from other sites (plan 5.10): a change needs JSON and our own Origin.
       const changes = req.method !== "GET";
@@ -286,7 +498,7 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
 
       const body = changes ? await readJsonObject(req, route.limit ?? BODY_LIMIT) : {};
-      const reply = await route.handle({ body, auth, address: req.socket.remoteAddress ?? "" });
+      const reply = await route.handle({ body, params, auth, address: req.socket.remoteAddress ?? "" });
 
       const headers: Record<string, string> = {};
       if (reply.session !== undefined) {

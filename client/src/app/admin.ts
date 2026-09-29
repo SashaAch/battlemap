@@ -20,7 +20,7 @@ function stateKey(user: UserInfo): Key {
 }
 
 /** A result line: the text for `key` with `params`, then the secret in a <code> that is easy to copy. */
-function secretLine(key: Key, params: Record<string, string>, secret: string): HTMLParagraphElement {
+export function secretLine(key: Key, params: Record<string, string>, secret: string): HTMLParagraphElement {
   const line = document.createElement("p");
   line.className = "form-note";
   const code = document.createElement("code");

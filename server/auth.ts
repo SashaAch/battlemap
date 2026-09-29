@@ -9,6 +9,7 @@ import { isThemeChoice } from "../client/src/theme.ts";
 import type { THEME_CHOICES } from "../client/src/theme.ts";
 import type { Database, Role, User } from "./db.ts";
 import { ApiError } from "./errors.ts";
+import type { ErrorCode } from "./errors.ts";
 import { addressKey, AttemptLimiter } from "./limits.ts";
 import { decoyPassword, isCurrent, scryptHasher } from "./passwords.ts";
 import type { PasswordHasher } from "./passwords.ts";
@@ -54,12 +55,14 @@ function checkLogin(value: string): string {
   return value;
 }
 
-/** Up to 40 characters after trimming, not empty, no control characters. */
-function checkDisplayName(value: string): string {
+/** A name (of a user, game or scene): up to 40 characters after trimming, not empty, no control characters; else `error`. */
+export function checkName(value: string, error: ErrorCode): string {
   const name = value.trim();
-  if (name === "" || length(name) > 40 || CONTROL_CHARACTER.test(name)) throw new ApiError("name.format");
+  if (name === "" || length(name) > 40 || CONTROL_CHARACTER.test(name)) throw new ApiError(error);
   return name;
 }
+
+const checkDisplayName = (value: string): string => checkName(value, "name.format");
 
 function checkPassword(value: string): string {
   const size = length(value);
@@ -67,20 +70,23 @@ function checkPassword(value: string): string {
   return value;
 }
 
-function checkWhole(value: number, max: number): number {
+export function checkWhole(value: number, max: number): number {
   if (!Number.isSafeInteger(value) || value < 1 || value > max) throw new ApiError("request.format");
   return value;
 }
 
 // ---- secrets ----
 
-/** Session tokens, registration codes and the setup token are kept only as this hash. */
-const sha256 = (text: string): Buffer => createHash("sha256").update(text).digest();
+/** Session tokens, registration and game codes and the setup token are kept only as this hash. */
+export const sha256 = (text: string): Buffer => createHash("sha256").update(text).digest();
 
 function readableText(size: number): string {
   // 256 is a multiple of 32, so taking the low 5 bits of each byte is uniform.
   return [...randomBytes(size)].map((byte) => READABLE[byte & 31]).join("");
 }
+
+/** A new code for a registration or game invite: 16 readable characters, 80 random bits. */
+export const newInviteCode = (): string => readableText(INVITE_CODE_LENGTH);
 
 // ---- account settings (plan 5.15) ----
 
@@ -403,7 +409,7 @@ export class Accounts {
   createInvite(admin: User, maxUses: number, days: number): { code: string; expiresAt: number; maxUses: number } {
     checkWhole(maxUses, INVITE_MAX_USES);
     checkWhole(days, INVITE_MAX_DAYS);
-    const code = readableText(INVITE_CODE_LENGTH);
+    const code = newInviteCode();
     const expiresAt = this.#now() + days * DAY_MS;
     this.#db.insertInvite(sha256(code), "register", null, admin.id, expiresAt, maxUses);
     return { code, expiresAt, maxUses };
