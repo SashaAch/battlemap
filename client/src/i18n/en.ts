@@ -45,7 +45,8 @@ export const en: Record<keyof typeof ru, string> = {
   "status.scale": "1 square = 5 ft",
 
   "notice.close": "Close",
-  "notice.draftBroken": "The draft is damaged; an empty scene was opened.",
-  "notice.draftNewer": "The draft was saved by a newer version of the app and cannot be opened here; an empty scene was opened.",
+  "notice.draftBroken": "The draft is damaged and was not opened. It has been kept separately; an empty scene was opened.",
+  "notice.draftNewer": "The draft was saved by a newer version of the app and was not opened here. It has been kept separately; an empty scene was opened.",
+  "notice.draftUnkept": "The draft cannot be opened, and keeping a separate copy of it failed. To avoid overwriting it, changes to this scene are not saved.",
   "notice.storageFailed": "The browser does not allow saving data: the draft and settings are not kept.",
 };

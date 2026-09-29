@@ -3,11 +3,11 @@
 import type { TerrainId } from "./catalog.ts";
 import { brushSquare, cellKey, cellsOfSquare, isCellInRange, panBy, pointsAlong, screenToWorld, zoomAt } from "./geometry.ts";
 import type { Camera, Point } from "./geometry.ts";
-import { applyPatch, mergeInverses, record } from "./store.ts";
+import { applyToChange, beginChange, cancelChange, finishChange } from "./store.ts";
 import type { History, Patch, Scene } from "./store.ts";
 
 export const BRUSH_SIZES = [1, 2, 3] as const;
-export type BrushSize = (typeof BRUSH_SIZES)[number];
+type BrushSize = (typeof BRUSH_SIZES)[number];
 
 export interface Board {
   scene: Scene;
@@ -19,7 +19,7 @@ export interface Board {
   hover: Point | null;
 }
 
-export interface ToolHooks {
+interface ToolHooks {
   /** The picture changed: camera, brush outline or cells in a stroke under way. */
   redraw(): void;
   /** A finished change entered the history. */
@@ -40,7 +40,6 @@ const LINE_HEIGHT_PX = 16;
 interface Stroke {
   pointerId: number;
   last: Point;
-  inverses: Patch[];
 }
 
 interface Pinch {
@@ -72,12 +71,15 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
       if (isCellInRange(x, y) && board.scene.cells[key] !== board.terrain) patch.push(["cells", key, board.terrain]);
     }
     if (patch.length === 0) return;
-    stroke.inverses.push(applyPatch(board.scene, patch));
+    applyToChange(board.scene, board.history, patch);
     hooks.redraw();
   };
 
+  // One stroke, from press to release, is one change and one undo step; undo and redo wait for its end.
   const startStroke = (pointerId: number, world: Point): void => {
-    stroke = { pointerId, last: world, inverses: [] };
+    if (stroke) return;
+    beginChange(board.history);
+    stroke = { pointerId, last: world };
     paintSquareAt(world);
   };
 
@@ -87,20 +89,16 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
     stroke.last = world;
   };
 
-  // One stroke, from press to release, is one change and one undo step.
   const finishStroke = (): void => {
     if (!stroke) return;
-    const inverse = mergeInverses(stroke.inverses);
     stroke = null;
-    if (inverse.length === 0) return;
-    record(board.history, inverse);
-    hooks.committed();
+    if (finishChange(board.history)) hooks.committed();
   };
 
   // A second finger turns a stroke into a pinch: the cells painted by the first finger are taken back.
   const cancelStroke = (): void => {
     if (!stroke) return;
-    applyPatch(board.scene, mergeInverses(stroke.inverses));
+    cancelChange(board.scene, board.history);
     stroke = null;
     hooks.redraw();
   };
@@ -124,7 +122,7 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
       e.preventDefault();
       panPointer = { id: e.pointerId, last: point };
       updateCursor();
-    } else if (e.button === 0 && !stroke) {
+    } else if (e.button === 0) {
       startStroke(e.pointerId, screenToWorld(board.camera, point));
     } else {
       return;
@@ -210,7 +208,6 @@ export function attachTools(canvas: HTMLCanvasElement, board: Board, hooks: Tool
       }
     } else if (mod && (e.code === "KeyZ" || e.code === "KeyY")) {
       e.preventDefault();
-      if (stroke) return;
       if (e.code === "KeyY" || e.shiftKey) hooks.redo();
       else hooks.undo();
     } else if (!mod && (e.code === "BracketLeft" || e.code === "BracketRight")) {

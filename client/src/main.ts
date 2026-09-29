@@ -5,73 +5,46 @@ import type { TerrainId } from "./board/catalog.ts";
 import { brushSquare, cellAt, DEFAULT_SCALE, panBy } from "./board/geometry.ts";
 import { drawBoard, fitCanvas, readBoardColors } from "./board/render.ts";
 import type { BoardColors, Viewport } from "./board/render.ts";
-import { newHistory, newScene, parseScene, redo, SceneError, undo } from "./board/store.ts";
-import type { Scene } from "./board/store.ts";
+import { newHistory, redo, undo } from "./board/store.ts";
 import { attachTools, BRUSH_SIZES } from "./board/tools.ts";
 import type { Board } from "./board/tools.ts";
-import { en } from "./i18n/en.ts";
-import { ru } from "./i18n/ru.ts";
+import { openDraft, saveDraft } from "./draft.ts";
+import type { DraftProblem, DraftStorage } from "./draft.ts";
+import { defaultLang, getLang, isKey, isLang, LANGS, setLang, t } from "./i18n/index.ts";
+import type { Key } from "./i18n/index.ts";
 import { isThemeChoice, startThemes, THEME_CHOICES } from "./theme.ts";
 
-const STORAGE = { lang: "battlemap.lang", theme: "battlemap.theme", draft: "battlemap.draft" } as const;
+const LANG_KEY = "battlemap.lang";
+const THEME_KEY = "battlemap.theme";
 const DRAFT_SAVE_DELAY_MS = 1000;
 
-// ---- storage: every access guarded, the page works without it ----
+const DRAFT_NOTICE: Record<DraftProblem, Key> = {
+  newer: "notice.draftNewer",
+  broken: "notice.draftBroken",
+  unkept: "notice.draftUnkept",
+};
 
-function readStorage(key: string): string | null {
+// ---- storage: every access may throw (disabled storage, full quota), the page works without it ----
+
+const storage: DraftStorage = {
+  getItem: (key) => localStorage.getItem(key),
+  setItem: (key, value) => localStorage.setItem(key, value),
+};
+
+function readSetting(key: string): string | null {
   try {
-    return localStorage.getItem(key);
+    return storage.getItem(key);
   } catch {
     return null;
   }
 }
 
-function writeStorage(key: string, value: string): void {
+function writeSetting(key: string, value: string): void {
   try {
-    localStorage.setItem(key, value);
+    storage.setItem(key, value);
   } catch {
     showNotice("notice.storageFailed");
   }
-}
-
-// ---- languages ----
-
-type Key = keyof typeof ru;
-const DICTIONARIES = { ru, en };
-type Lang = keyof typeof DICTIONARIES;
-
-function isLang(value: unknown): value is Lang {
-  return typeof value === "string" && Object.hasOwn(DICTIONARIES, value);
-}
-
-function isKey(value: unknown): value is Key {
-  return typeof value === "string" && Object.hasOwn(ru, value);
-}
-
-const storedLang = readStorage(STORAGE.lang);
-let lang: Lang = isLang(storedLang) ? storedLang : navigator.language.toLowerCase().startsWith("ru") ? "ru" : "en";
-
-function t(key: Key, params: Record<string, string | number> = {}): string {
-  return DICTIONARIES[lang][key].replace(/\{(\w+)\}/g, (match, name: string) =>
-    Object.hasOwn(params, name) ? String(params[name]) : match,
-  );
-}
-
-function translateAttribute(attribute: string, apply: (element: HTMLElement, text: string) => void): void {
-  for (const element of document.querySelectorAll<HTMLElement>(`[${attribute}]`)) {
-    const key = element.getAttribute(attribute);
-    if (!isKey(key)) throw new Error(`unknown dictionary key ${key} in ${attribute}`);
-    apply(element, t(key));
-  }
-}
-
-function applyLanguage(): void {
-  document.documentElement.lang = lang;
-  document.title = t("app.title");
-  translateAttribute("data-i18n", (element, text) => (element.textContent = text));
-  translateAttribute("data-i18n-title", (element, text) => (element.title = text));
-  updateStatus();
-  updateNotice();
 }
 
 // ---- page elements ----
@@ -98,6 +71,28 @@ const context = canvas.getContext("2d");
 if (!context) throw new Error("canvas 2d context is unavailable");
 const ctx = context;
 
+// ---- languages ----
+
+const storedLang = readSetting(LANG_KEY);
+setLang(isLang(storedLang) ? storedLang : defaultLang(navigator.language));
+
+function translateAttribute(attribute: string, apply: (element: HTMLElement, text: string) => void): void {
+  for (const element of document.querySelectorAll<HTMLElement>(`[${attribute}]`)) {
+    const key = element.getAttribute(attribute);
+    if (!isKey(key)) throw new Error(`unknown dictionary key ${key} in ${attribute}`);
+    apply(element, t(key));
+  }
+}
+
+function applyLanguage(): void {
+  document.documentElement.lang = getLang();
+  document.title = t("app.title");
+  translateAttribute("data-i18n", (element, text) => (element.textContent = text));
+  translateAttribute("data-i18n-title", (element, text) => (element.title = text));
+  updateStatus();
+  updateNotice();
+}
+
 // ---- notice ----
 
 let noticeKey: Key | null = null;
@@ -119,41 +114,32 @@ noticeClose.addEventListener("click", () => {
 
 // ---- draft ----
 
-function loadDraft(): Scene {
-  const raw = readStorage(STORAGE.draft);
-  if (raw === null) return newScene();
-  try {
-    return parseScene(JSON.parse(raw));
-  } catch (error) {
-    if (error instanceof SceneError && error.code === "version") showNotice("notice.draftNewer");
-    else if (error instanceof SceneError || error instanceof SyntaxError) showNotice("notice.draftBroken");
-    else throw error;
-    return newScene();
-  }
-}
+const draft = openDraft(storage);
+if (draft.problem) showNotice(DRAFT_NOTICE[draft.problem]);
 
 let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
-function saveDraft(): void {
+function saveNow(): void {
   clearTimeout(saveTimer);
   saveTimer = undefined;
-  writeStorage(STORAGE.draft, JSON.stringify(board.scene));
+  if (!saveDraft(storage, board.scene)) showNotice("notice.storageFailed");
 }
 
 function scheduleSave(): void {
+  if (!draft.canSave) return;
   clearTimeout(saveTimer);
-  saveTimer = setTimeout(saveDraft, DRAFT_SAVE_DELAY_MS);
+  saveTimer = setTimeout(saveNow, DRAFT_SAVE_DELAY_MS);
 }
 
 // A reload right after a change would otherwise lose it.
 window.addEventListener("pagehide", () => {
-  if (saveTimer !== undefined) saveDraft();
+  if (saveTimer !== undefined) saveNow();
 });
 
 // ---- board ----
 
 const board: Board = {
-  scene: loadDraft(),
+  scene: draft.scene,
   history: newHistory(),
   camera: { x: 0, y: 0, scale: DEFAULT_SCALE },
   terrain: TERRAIN[0].id,
@@ -201,6 +187,7 @@ function sceneChanged(): void {
   redraw();
 }
 
+// Both do nothing while a stroke is under way (see beginChange in store.ts).
 function doUndo(): void {
   if (undo(board.scene, board.history)) sceneChanged();
 }
@@ -270,26 +257,31 @@ function updateTerrainButtons(): void {
   for (const { id, button } of terrainButtons) button.setAttribute("aria-pressed", String(id === board.terrain));
 }
 
-for (const code of Object.keys(DICTIONARIES) as Lang[]) languageSelect.append(option(code, `lang.${code}`));
-languageSelect.value = lang;
+for (const code of LANGS) languageSelect.append(option(code, `lang.${code}`));
+languageSelect.value = getLang();
 languageSelect.addEventListener("change", () => {
   if (!isLang(languageSelect.value)) return;
-  lang = languageSelect.value;
-  writeStorage(STORAGE.lang, lang);
+  setLang(languageSelect.value);
+  writeSetting(LANG_KEY, languageSelect.value);
   applyLanguage();
 });
 
-const storedTheme = readStorage(STORAGE.theme);
+const storedTheme = readSetting(THEME_KEY);
 const initialTheme = isThemeChoice(storedTheme) ? storedTheme : "system";
 for (const choice of THEME_CHOICES) themeSelect.append(option(choice, `theme.${choice}`));
 themeSelect.value = initialTheme;
-const setTheme = startThemes(initialTheme, () => {
-  colors = readBoardColors();
-  redraw();
-});
+const setTheme = startThemes(
+  document.documentElement,
+  window.matchMedia("(prefers-color-scheme: dark)"),
+  initialTheme,
+  () => {
+    colors = readBoardColors();
+    redraw();
+  },
+);
 themeSelect.addEventListener("change", () => {
   if (!isThemeChoice(themeSelect.value)) return;
-  writeStorage(STORAGE.theme, themeSelect.value);
+  writeSetting(THEME_KEY, themeSelect.value);
   setTheme(themeSelect.value);
 });
 

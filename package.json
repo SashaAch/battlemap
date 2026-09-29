@@ -7,7 +7,7 @@
     "node": ">=22.22"
   },
   "scripts": {
-    "check": "tsc --noEmit",
+    "check": "tsc -p tsconfig.json && tsc -p client/tsconfig.json",
     "test": "node --test",
     "build": "esbuild client/src/main.ts --bundle --minify --target=es2022 --outfile=client/dist/app.js",
     "dev": "esbuild client/src/main.ts --bundle --sourcemap --target=es2022 --outfile=client/dist/app.js --watch=forever --serve=127.0.0.1:8000 --servedir=client"

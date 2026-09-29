@@ -6,6 +6,7 @@ import path from "node:path";
 import { describe, test } from "node:test";
 
 import { en } from "../client/src/i18n/en.ts";
+import { defaultLang, getLang, setLang, t } from "../client/src/i18n/index.ts";
 import { ru } from "../client/src/i18n/ru.ts";
 import { THEME_CHOICES } from "../client/src/theme.ts";
 
@@ -27,6 +28,30 @@ describe("dictionaries", () => {
     const keys = [...html.matchAll(/data-i18n(?:-title)?="([^"]+)"/g)].map((match) => match[1]);
     assert.ok(keys.length > 0);
     for (const key of keys) assert.ok(Object.hasOwn(ru, key), `index.html uses unknown key ${key}`);
+  });
+});
+
+describe("t()", () => {
+  test("follows the current language and fills parameters", () => {
+    const before = getLang();
+    try {
+      setLang("ru");
+      assert.equal(t("status.cell", { x: -3, y: 0 }), "Клетка -3, 0");
+      setLang("en");
+      assert.equal(t("status.cell", { x: 12, y: -7 }), "Square 12, -7");
+      assert.equal(t("status.cell"), "Square {x}, {y}");
+    } finally {
+      setLang(before);
+    }
+  });
+
+  test("the default language is Russian only for a ru* browser", () => {
+    assert.equal(defaultLang("ru"), "ru");
+    assert.equal(defaultLang("ru-RU"), "ru");
+    assert.equal(defaultLang("RU"), "ru");
+    assert.equal(defaultLang("en-US"), "en");
+    assert.equal(defaultLang("uk-UA"), "en");
+    assert.equal(defaultLang(""), "en");
   });
 });
 

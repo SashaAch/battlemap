@@ -4,18 +4,21 @@ import { describe, test } from "node:test";
 import { TERRAIN } from "../client/src/board/catalog.ts";
 import {
   applyPatch,
+  applyToChange,
+  beginChange,
+  cancelChange,
   COLLECTIONS,
+  finishChange,
   mergeInverses,
   newHistory,
   newScene,
   parseScene,
-  record,
   redo,
   SceneError,
   undo,
   validatePatch,
 } from "../client/src/board/store.ts";
-import type { Patch, PatchOp, Scene } from "../client/src/board/store.ts";
+import type { History, Patch, PatchOp, Scene } from "../client/src/board/store.ts";
 
 /** Deterministic PRNG (mulberry32), so a failing run repeats. */
 function seededRandom(seed: number): () => number {
@@ -139,12 +142,19 @@ describe("merged inverses", () => {
   });
 });
 
+/** A change of one patch, as a one-dab stroke. */
+function commit(scene: Scene, history: History, patch: Patch): void {
+  beginChange(history);
+  applyToChange(scene, history, patch);
+  finishChange(history);
+}
+
 describe("undo and redo", () => {
   test("undo restores, redo repeats, a new change clears redo", () => {
     const scene = newScene();
     const history = newHistory();
-    record(history, applyPatch(scene, [["cells", "0,0", "grass"]]));
-    record(history, applyPatch(scene, [["cells", "1,0", "sand"]]));
+    commit(scene, history, [["cells", "0,0", "grass"]]);
+    commit(scene, history, [["cells", "1,0", "sand"]]);
 
     assert.equal(undo(scene, history), true);
     assert.deepEqual(scene.cells, { "0,0": "grass" });
@@ -155,7 +165,7 @@ describe("undo and redo", () => {
     assert.equal(redo(scene, history), true);
     assert.deepEqual(scene.cells, { "0,0": "grass" });
 
-    record(history, applyPatch(scene, [["cells", "5,5", "rock"]]));
+    commit(scene, history, [["cells", "5,5", "rock"]]);
     assert.equal(redo(scene, history), false);
     assert.deepEqual(scene.cells, { "0,0": "grass", "5,5": "rock" });
   });
@@ -163,7 +173,7 @@ describe("undo and redo", () => {
   test("10 changes, 10 undos give an empty scene, 10 redos bring it back", () => {
     const scene = newScene();
     const history = newHistory();
-    for (let x = 0; x < 10; x++) record(history, applyPatch(scene, [["cells", `${x},0`, "dirt"]]));
+    for (let x = 0; x < 10; x++) commit(scene, history, [["cells", `${x},0`, "dirt"]]);
     const painted = structuredClone(scene);
     for (let i = 0; i < 10; i++) assert.equal(undo(scene, history), true);
     assert.deepEqual(scene, newScene());
@@ -171,10 +181,74 @@ describe("undo and redo", () => {
     assert.deepEqual(scene, painted);
   });
 
-  test("an empty inverse is not recorded", () => {
+  test("a change that changed nothing is not recorded", () => {
     const history = newHistory();
-    record(history, []);
+    beginChange(history);
+    assert.equal(finishChange(history), false);
     assert.equal(history.undo.length, 0);
+  });
+});
+
+describe("a change of several patches (a stroke)", () => {
+  test("is one undo step", () => {
+    const scene = newScene();
+    const history = newHistory();
+    beginChange(history);
+    applyToChange(scene, history, [["cells", "0,0", "grass"]]);
+    applyToChange(scene, history, [["cells", "1,0", "grass"], ["cells", "0,0", "lava"]]);
+    assert.equal(finishChange(history), true);
+    assert.equal(history.undo.length, 1);
+    assert.equal(undo(scene, history), true);
+    assert.deepEqual(scene, newScene());
+  });
+
+  test("blocks undo and redo until it ends, so the history stays in step with the scene", () => {
+    const scene = newScene();
+    const history = newHistory();
+    commit(scene, history, [["cells", "0,0", "sand"]]);
+    commit(scene, history, [["cells", "1,0", "sand"]]);
+    undo(scene, history);
+
+    beginChange(history);
+    applyToChange(scene, history, [["cells", "0,0", "ice"], ["cells", "2,0", "ice"]]);
+    assert.equal(undo(scene, history), false);
+    assert.equal(redo(scene, history), false);
+    assert.deepEqual(scene.cells, { "0,0": "ice", "2,0": "ice" });
+    assert.equal(history.undo.length, 1);
+    assert.equal(history.redo.length, 1);
+
+    applyToChange(scene, history, [["cells", "3,0", "ice"]]);
+    finishChange(history);
+    assert.equal(history.redo.length, 0);
+    assert.equal(undo(scene, history), true);
+    assert.deepEqual(scene.cells, { "0,0": "sand" });
+    assert.equal(undo(scene, history), true);
+    assert.deepEqual(scene, newScene());
+    assert.equal(undo(scene, history), false);
+  });
+
+  test("cancelled, leaves the scene and the history as they were", () => {
+    const scene = newScene();
+    const history = newHistory();
+    commit(scene, history, [["cells", "0,0", "sand"]]);
+    const before = structuredClone(scene);
+    beginChange(history);
+    applyToChange(scene, history, [["cells", "0,0", "mud"], ["cells", "4,4", "mud"]]);
+    cancelChange(scene, history);
+    assert.deepEqual(scene, before);
+    assert.equal(history.undo.length, 1);
+    assert.equal(history.open, null);
+    assert.equal(undo(scene, history), true);
+  });
+
+  test("cannot be opened twice or used when not open", () => {
+    const scene = newScene();
+    const history = newHistory();
+    assert.throws(() => applyToChange(scene, history, []));
+    assert.throws(() => finishChange(history));
+    assert.throws(() => cancelChange(scene, history));
+    beginChange(history);
+    assert.throws(() => beginChange(history));
   });
 });
 

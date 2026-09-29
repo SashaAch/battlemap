@@ -1,6 +1,6 @@
 // Canonical board data shared by the client and the server. No DOM, no storage.
 
-export interface TerrainDef {
+interface TerrainDef {
   readonly id: string;
   /** Fill colour, identical in every theme so all players see the same map. */
   readonly color: string;

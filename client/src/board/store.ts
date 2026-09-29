@@ -2,10 +2,10 @@
 
 import { isTerrainId } from "./catalog.ts";
 
-export const SCENE_VERSION = 1;
+const SCENE_VERSION = 1;
 
 export const COLLECTIONS = ["settings", "cells", "rooms", "edges", "objects", "tokens", "marks", "revealed"] as const;
-export type CollectionName = (typeof COLLECTIONS)[number];
+type CollectionName = (typeof COLLECTIONS)[number];
 
 export type Scene = { v: typeof SCENE_VERSION } & Record<CollectionName, Record<string, unknown>>;
 
@@ -18,9 +18,11 @@ export interface History {
   undo: Patch[];
   /** Inverse patches of undone changes, the last one is redone first. */
   redo: Patch[];
+  /** Inverses of the patches of an unfinished change, null when no change is open. */
+  open: Patch[] | null;
 }
 
-export type SceneErrorCode = "version" | "format" | "collection" | "key" | "value";
+type SceneErrorCode = "version" | "format" | "collection" | "key" | "value";
 
 export class SceneError extends Error {
   readonly code: SceneErrorCode;
@@ -32,8 +34,8 @@ export class SceneError extends Error {
   }
 }
 
-export const DIAGONAL_RULES = ["5", "5-10-5"] as const;
-export const SCENE_NAME_MAX = 40;
+const DIAGONAL_RULES = ["5", "5-10-5"] as const;
+const SCENE_NAME_MAX = 40;
 
 const CELL_KEY = /^-?\d{1,4},-?\d{1,4}$/;
 const EDGE_KEY = /^[hv]:-?\d{1,4},-?\d{1,4}$/;
@@ -157,17 +159,43 @@ export function parseScene(data: unknown): Scene {
 }
 
 export function newHistory(): History {
-  return { undo: [], redo: [] };
+  return { undo: [], redo: [], open: null };
 }
 
-/** Records the inverse of a change already applied to the scene; drops the redo stack. */
-export function record(history: History, inverse: Patch): void {
-  if (inverse.length === 0) return;
+/**
+ * Opens a change built from several patches (a brush stroke from press to release).
+ * Until it is finished or cancelled, undo and redo do nothing.
+ */
+export function beginChange(history: History): void {
+  if (history.open) throw new Error("a change is already open");
+  history.open = [];
+}
+
+export function applyToChange(scene: Scene, history: History, patch: Patch): void {
+  if (!history.open) throw new Error("no open change");
+  history.open.push(applyPatch(scene, patch));
+}
+
+/** Closes the open change as one undo step; returns false if it changed nothing. */
+export function finishChange(history: History): boolean {
+  if (!history.open) throw new Error("no open change");
+  const inverse = mergeInverses(history.open);
+  history.open = null;
+  if (inverse.length === 0) return false;
   history.undo.push(inverse);
   history.redo.length = 0;
+  return true;
+}
+
+/** Takes the open change back from the scene without a trace in the history. */
+export function cancelChange(scene: Scene, history: History): void {
+  if (!history.open) throw new Error("no open change");
+  applyPatch(scene, mergeInverses(history.open));
+  history.open = null;
 }
 
 export function undo(scene: Scene, history: History): boolean {
+  if (history.open) return false;
   const inverse = history.undo.pop();
   if (!inverse) return false;
   history.redo.push(applyPatch(scene, inverse));
@@ -175,6 +203,7 @@ export function undo(scene: Scene, history: History): boolean {
 }
 
 export function redo(scene: Scene, history: History): boolean {
+  if (history.open) return false;
   const inverse = history.redo.pop();
   if (!inverse) return false;
   history.undo.push(applyPatch(scene, inverse));

@@ -3,7 +3,7 @@
     "target": "es2022",
     "module": "nodenext",
     "moduleResolution": "nodenext",
-    "lib": ["es2023", "dom", "dom.iterable"],
+    "lib": ["es2023"],
     "types": ["node"],
     "strict": true,
     "noEmit": true,
@@ -11,5 +11,5 @@
     "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true
   },
-  "include": ["client/src", "test"]
+  "include": ["test"]
 }

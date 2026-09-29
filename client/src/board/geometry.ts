@@ -24,7 +24,7 @@ export const MIN_SCALE = 8;
 export const MAX_SCALE = 160;
 export const DEFAULT_SCALE = 40;
 /** Largest absolute cell coordinate that fits the key format `-?\d{1,4}` (plan 6.2). */
-export const MAX_COORD = 9999;
+const MAX_COORD = 9999;
 
 export function screenToWorld(camera: Camera, screen: Point): Point {
   return { x: camera.x + screen.x / camera.scale, y: camera.y + screen.y / camera.scale };
