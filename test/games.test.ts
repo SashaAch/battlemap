@@ -404,26 +404,11 @@ describe("invites", () => {
     assert.equal((await call(site, "GET", `/api/games/${gameId}`, users.gm.cookie)).body.members.length, 2);
   });
 
-  test("a registration code does not open a game, and a game code does not register", async () => {
-    const dir = mkdtempSync(path.join(tmpdir(), "bm-games-"));
-    const site = await start(dir, { now: Date.UTC(2026, 0, 1) });
-    cleanups.push(async () => {
-      await site.server.close();
-      rmSync(dir, { recursive: true, force: true });
-    });
-    const link = site.server.setupLink ?? "";
-    const admin = await fetch(`${site.base}/api/auth/register`, {
-      method: "POST",
-      headers: { Origin: site.base, "Content-Type": "application/json" },
-      body: JSON.stringify({ login: "admin", displayName: "A", password: "admin-password", setup: link.slice(link.indexOf("#setup=") + 7) }),
-    });
-    const cookie = admin.headers.get("set-cookie")?.match(/^bm_session=[^;]*/)?.[0];
-    const registration = await call(site, "POST", "/api/admin/invites", cookie, { maxUses: 5, days: 5 });
-    assertError(await join(site, registration.body.code, { id: 1, cookie: cookie ?? "" }), "invite.notFound");
-    const gameId = await createGame(site, { id: 1, cookie: cookie ?? "" });
-    const code = await invite(site, gameId, { id: 1, cookie: cookie ?? "" });
-    const register = await call(site, "POST", "/api/auth/register", undefined, { login: "pat", displayName: "P", password: "pat-password", code });
-    assertError(register, "auth.inviteInvalid");
+  test("a registration code does not open a game", async () => {
+    const { site, users } = await siteWith("admin");
+    const registration = await call(site, "POST", "/api/admin/invites", users.admin.cookie, { maxUses: 5, days: 5 });
+    assert.equal(registration.status, 201);
+    assertError(await join(site, registration.body.code, users.admin), "invite.notFound");
   });
 
   test("failed joins count per address: after 10 even a good code gets 429", async () => {

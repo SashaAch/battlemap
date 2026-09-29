@@ -4,7 +4,7 @@
 import { isKey, t } from "../i18n/index.ts";
 import type { Key } from "../i18n/index.ts";
 import { ApiFailure, detectMode, request } from "./api.ts";
-import type { AccountSettings, Me } from "./api.ts";
+import type { AccountSettings, Me, Registered } from "./api.ts";
 
 export interface AccountHooks {
   /** Applies the language and theme kept in the account. */
@@ -16,6 +16,10 @@ export interface AccountHooks {
   showGames(screen: HTMLElement, actions: ScreenActions, joinCode: string): void;
   /** A user is signed in and may use the site (no password to replace). */
   signedIn(): void;
+  /** The address changed in the open tab: opens the game it names (#game=ID) unless it is open; true when it did. */
+  gameLink(): boolean;
+  /** Opens a game the user just became a player of by registering with an administrator's invite (R43). */
+  openGame(gameId: number): void;
   /** Nobody is signed in any more. */
   signedOut(): void;
 }
@@ -118,12 +122,23 @@ export function codeOf(error: unknown): string {
 
 // ---- the account ----
 
-/** Reads and removes `#name=value` from the address, so a one-time secret does not stay in the history. */
-function takeFromHash(name: string): string | null {
-  const match = new RegExp(`^#${name}=([A-Za-z0-9_-]+)$`).exec(location.hash);
+/**
+ * A link with a secret in the address: the first administrator (`#setup=`), a registration code (`#register=`)
+ * or a game invite (`#join=`). `#game=` is not one: it stays in the address (game.ts).
+ */
+interface SecretLink {
+  kind: "setup" | "register" | "join";
+  value: string;
+}
+
+const SECRET_LINK = /^#(setup|register|join)=([A-Za-z0-9_-]+)$/;
+
+/** Reads and removes a secret link from the address, so a one-time secret does not stay in the history. */
+function takeSecretLink(): SecretLink | null {
+  const match = SECRET_LINK.exec(location.hash);
   if (!match) return null;
   history.replaceState(null, "", location.pathname + location.search);
-  return match[1];
+  return { kind: match[1] as SecretLink["kind"], value: match[2] };
 }
 
 export function startAccount(hooks: AccountHooks): Account {
@@ -153,10 +168,11 @@ export function startAccount(hooks: AccountHooks): Account {
 
   let me: Me | null = null;
   let openRegistration = false;
-  const setupToken = takeFromHash("setup");
-  const inviteCode = takeFromHash("register");
+  /** Whether the server has said who is signed in; a link that comes before waits in `pending`. */
+  let started = false;
+  let pending = takeSecretLink();
   /** A game invite code from a link, put in "my games" once the user is signed in. */
-  let joinCode = takeFromHash("join");
+  let joinCode: string | null = null;
 
   function open(): HTMLElement {
     screen.replaceChildren();
@@ -260,7 +276,8 @@ export function startAccount(hooks: AccountHooks): Account {
     actions.className = "actions";
     const submit = labelled("button", "signIn.submit", "primary");
     submit.type = "submit";
-    actions.append(submit, button("signIn.toRegister", () => showRegister(null)));
+    // From an invite link, the registration form keeps its code.
+    actions.append(submit, button("signIn.toRegister", () => showRegister(null, joinCode ?? "", joinCode !== null)));
     form.append(login.wrap, password.wrap, errors.element, actions);
     submitting(form, errors, () =>
       request<Me>("POST", "api/auth/login", { login: login.input.value, password: password.input.value }).then(signedIn),
@@ -268,10 +285,14 @@ export function startAccount(hooks: AccountHooks): Account {
     login.input.focus();
   }
 
-  /** Registration by code, open registration, or the first administrator with the setup token. */
-  function showRegister(setup: string | null, code = ""): void {
+  /**
+   * Registration by code, open registration, or the first administrator with the setup token. `invited`: opened by
+   * a game invite link; with an administrator's invite the new user is a player of the game at once (R43).
+   */
+  function showRegister(setup: string | null, code = "", invited = false): void {
     const { form, errors } = card(setup ? "register.setupTitle" : "register.title");
     if (setup) form.append(labelled("p", "register.setupNote", "form-note"));
+    if (invited) form.append(labelled("p", openRegistration ? "register.inviteNoteOpen" : "register.inviteNote", "form-note"));
     const login = field("account.login", { name: "login", autocomplete: "username", noCapitals: true }, "account.loginHint");
     const displayName = field("account.displayName", { name: "displayName", maxLength: 40 });
     const password = field("account.password.new", { name: "password", type: "password", autocomplete: "new-password" }, "account.passwordHint");
@@ -301,7 +322,12 @@ export function startAccount(hooks: AccountHooks): Account {
       };
       if (setup) body.setup = setup;
       else if (needsCode) body.code = invite.input.value.trim();
-      return request<Me>("POST", "api/auth/register", body).then(signedIn);
+      return request<Registered>("POST", "api/auth/register", body).then((user) => {
+        // An administrator's invite made the user a player: straight into its game, no join button.
+        if (user.gameId !== null) joinCode = null;
+        signedIn(user);
+        if (user.gameId !== null) hooks.openGame(user.gameId);
+      });
     });
     login.input.focus();
   }
@@ -335,13 +361,53 @@ export function startAccount(hooks: AccountHooks): Account {
     current.input.focus();
   }
 
+  /**
+   * Acts on a secret link once the server has said who is signed in. Signed out: the setup or registration form,
+   * or for a game invite the registration form with the code (sign-in is a button away); nothing, the sign-in form.
+   * Signed in: a game invite goes to "my games", after a forced password change if there is one.
+   */
+  function follow(link: SecretLink | null): void {
+    if (me) {
+      if (link?.kind !== "join") return;
+      joinCode = link.value;
+      if (!me.mustChangePassword) {
+        showGames(joinCode);
+        joinCode = null;
+      }
+      return;
+    }
+    if (link?.kind === "setup") showRegister(link.value);
+    else if (link?.kind === "register") showRegister(null, link.value);
+    else if (link?.kind === "join") {
+      joinCode = link.value;
+      showRegister(null, link.value, true);
+    } else showSignIn();
+  }
+
   void detectMode().then((mode) => {
-    if (mode.kind === "signedIn") signedIn(mode.me);
-    else if (mode.kind === "signedOut") {
+    // The draft without a server has no accounts; its links are dropped.
+    if (mode.kind === "draft") return;
+    started = true;
+    const link = pending;
+    pending = null;
+    if (mode.kind === "signedIn") {
+      if (link?.kind === "join") joinCode = link.value;
+      signedIn(mode.me);
+    } else {
       openRegistration = mode.openRegistration;
-      if (setupToken) showRegister(setupToken);
-      else if (inviteCode) showRegister(null, inviteCode);
-      else showSignIn();
+      follow(link);
+    }
+  });
+
+  // Links opened in this tab while it is open (plan 8.26): the page is not loaded again.
+  window.addEventListener("hashchange", () => {
+    const link = takeSecretLink();
+    if (!started) {
+      if (link) pending = link;
+    } else if (link) {
+      follow(link);
+    } else if (me && !me.mustChangePassword && hooks.gameLink()) {
+      closeScreen();
     }
   });
 

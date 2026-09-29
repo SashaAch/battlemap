@@ -145,6 +145,17 @@ export interface SignedIn {
   token: string;
 }
 
+export interface Registered extends SignedIn {
+  /** The game the user became a player of by an administrator's game invite (R43), else null. */
+  gameId: number | null;
+}
+
+/** A code that lets a registration in: a registration code (no game) or an administrator's game invite. */
+interface Grant {
+  codeHash: Buffer;
+  gameId: number | null;
+}
+
 /** The session behind a request. `extended` means its expiry moved and the cookie must be sent again. */
 export interface Authenticated {
   user: User;
@@ -157,7 +168,7 @@ export interface Registration {
   login: string;
   displayName: string;
   password: string;
-  /** Registration code from an administrator. */
+  /** A registration code, or a game invite of an administrator (R43). */
   code?: string;
   /** The first-administrator token from the console link. */
   setup?: string;
@@ -204,7 +215,14 @@ export class Accounts {
     return openRegistration && this.#db.countUsers() > 0;
   }
 
-  async register(input: Registration, openRegistration: boolean, address: string): Promise<SignedIn> {
+  /**
+   * Registers with the setup token, with open registration, or else with a code: a registration code, or a game
+   * invite made by someone who is an administrator at this moment (R43), which also makes the user a player of
+   * its game and uses the invite once, in the same transaction as the account. Any other game invite, and a code
+   * used up, answer as an unknown code (`auth.inviteInvalid`); an administrator's expired game invite is 410.
+   * With open registration a code is not used: the user joins the game by its button later.
+   */
+  async register(input: Registration, openRegistration: boolean, address: string): Promise<Registered> {
     const { setup, code } = input;
     const now = this.#now();
     // Every registration by code or open registration counts, successful or not.
@@ -216,25 +234,32 @@ export class Accounts {
     const password = checkPassword(input.password);
 
     const needsInvite = setup === undefined && !this.registrationOpen(openRegistration);
-    const codeHash = code === undefined ? null : sha256(code);
-    const refusal = setup !== undefined ? "auth.setupInvalid" : "auth.inviteInvalid";
-    const allowed = (): boolean => {
-      if (setup !== undefined) return this.#setupMatches(setup);
-      return !needsInvite || (codeHash !== null && this.#db.hasInvite(codeHash, "register", now));
+    /** What lets the user in; null when no code is needed. Throws the refusal. */
+    const grant = (): Grant | null => {
+      if (setup !== undefined) {
+        if (!this.#setupMatches(setup)) throw new ApiError("auth.setupInvalid");
+        return null;
+      }
+      if (!needsInvite) return null;
+      if (code === undefined) throw new ApiError("auth.inviteInvalid");
+      return this.#grantOf(sha256(code), now);
     };
 
     // The code is checked before the login, so without one nobody learns which logins exist.
-    if (!allowed()) throw new ApiError(refusal);
+    grant();
     if (this.#db.findUserByLogin(login)) throw new ApiError("login.taken");
 
     const stored = await this.#hasher.hash(password);
 
-    // Checked again in one transaction: other requests ran while the password was hashed.
-    const user = this.#db.transaction(() => {
-      if (!allowed()) throw new ApiError(refusal);
+    // Checked again in one transaction: other requests ran while the password was hashed (a use of the code,
+    // a change of its creator's role). A failure anywhere leaves neither the account nor the membership.
+    const { user, gameId } = this.#db.transaction(() => {
+      const granted = grant();
       if (this.#db.findUserByLogin(login)) throw new ApiError("login.taken");
-      if (needsInvite && (codeHash === null || !this.#db.useInvite(codeHash, "register", now))) throw new ApiError(refusal);
-      return this.#db.insertUser({
+      if (granted && !this.#db.useInvite(granted.codeHash, granted.gameId === null ? "register" : "game", now)) {
+        throw new ApiError("auth.inviteInvalid");
+      }
+      const created = this.#db.insertUser({
         login,
         displayName,
         ...stored,
@@ -242,9 +267,29 @@ export class Accounts {
         mustChangePassword: false,
         createdAt: now,
       });
+      const joined = granted?.gameId ?? null;
+      if (joined !== null) this.#db.insertMember(joined, created.id, "player", now);
+      return { user: created, gameId: joined };
     });
     if (setup !== undefined) this.#setupHash = null;
-    return { user, token: this.#newSession(user, now) };
+    return { user, token: this.#newSession(user, now), gameId };
+  }
+
+  /** What a code gives a registration; throws for a code that gives nothing (see register). */
+  #grantOf(codeHash: Buffer, now: number): Grant {
+    const invite = this.#db.findInvite(codeHash);
+    if (!invite) throw new ApiError("auth.inviteInvalid");
+    if (invite.kind === "register") {
+      if (invite.expiresAt <= now || invite.uses >= invite.maxUses) throw new ApiError("auth.inviteInvalid");
+      return { codeHash, gameId: null };
+    }
+    // Nothing tells the code of someone else from an unknown one, not even its expiry.
+    const creator = this.#db.findUserById(invite.createdBy);
+    if (!creator || creator.role !== "admin" || creator.disabled || invite.gameId === null) throw new ApiError("auth.inviteInvalid");
+    // As when joining (stage 5): a used-up invite is like an unknown one, an expired one is 410.
+    if (invite.uses >= invite.maxUses) throw new ApiError("auth.inviteInvalid");
+    if (invite.expiresAt <= now) throw new ApiError("invite.expired");
+    return { codeHash, gameId: invite.gameId };
   }
 
   /**

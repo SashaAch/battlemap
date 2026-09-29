@@ -489,6 +489,25 @@ button.primary:hover:not(:disabled) {
   max-width: 100%;
 }
 
+/* A new invite (app/invite.ts): the QR code has the same colours in every theme (themes.css). */
+.invite {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.qr {
+  display: block;
+  align-self: center;
+  max-width: 100%;
+  height: auto;
+  image-rendering: pixelated;
+}
+
+.qr[hidden] {
+  display: none;
+}
+
 .scene-list li,
 .member-list li {
   display: flex;

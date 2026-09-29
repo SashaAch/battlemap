@@ -184,8 +184,11 @@ export interface SceneRecord extends SceneInfo {
   stateJson: string;
 }
 
-export interface GameInvite {
-  gameId: number;
+export interface Invite {
+  kind: InviteKind;
+  /** The game of a game invite, null for a registration code. */
+  gameId: number | null;
+  createdBy: number;
   expiresAt: number;
   uses: number;
   maxUses: number;
@@ -417,17 +420,6 @@ export class Database {
     );
   }
 
-  /** The invite exists, has not expired and has uses left. */
-  hasInvite(codeHash: Uint8Array, kind: InviteKind, now: number): boolean {
-    const row = this.#get(
-      "SELECT 1 AS found FROM invites WHERE code_hash = ? AND kind = ? AND expires_at > ? AND uses < max_uses",
-      codeHash,
-      kind,
-      now,
-    );
-    return row !== undefined;
-  }
-
   /** Uses the invite once, in one statement, so parallel requests never exceed max_uses; false when it cannot be used. */
   useInvite(codeHash: Uint8Array, kind: InviteKind, now: number): boolean {
     const changed = this.#run(
@@ -439,11 +431,18 @@ export class Database {
     return changed === 1;
   }
 
-  /** A game invite by the hash of its code, also when it has expired or has no uses left. */
-  findGameInvite(codeHash: Uint8Array): GameInvite | undefined {
-    const row = this.#get("SELECT game_id, expires_at, uses, max_uses FROM invites WHERE code_hash = ? AND kind = 'game'", codeHash);
+  /** An invite of either kind by the hash of its code, also when it has expired or has no uses left. */
+  findInvite(codeHash: Uint8Array): Invite | undefined {
+    const row = this.#get("SELECT * FROM invites WHERE code_hash = ?", codeHash);
     return (
-      row && { gameId: Number(row.game_id), expiresAt: Number(row.expires_at), uses: Number(row.uses), maxUses: Number(row.max_uses) }
+      row && {
+        kind: row.kind === "game" ? "game" : "register",
+        gameId: row.game_id === null ? null : Number(row.game_id),
+        createdBy: Number(row.created_by),
+        expiresAt: Number(row.expires_at),
+        uses: Number(row.uses),
+        maxUses: Number(row.max_uses),
+      }
     );
   }
 

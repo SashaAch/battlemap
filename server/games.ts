@@ -316,23 +316,29 @@ export class Games {
     const key = addressKey(address);
     if (!this.#joinFailures.take(key, now)) throw new ApiError("invite.tooManyAttempts");
     const codeHash = sha256(code);
-    const invite = this.#db.findGameInvite(codeHash);
-    if (invite && this.#db.findMemberRole(invite.gameId, user.id)) {
+    const invite = this.#db.findInvite(codeHash);
+    const gameId = invite?.kind === "game" ? invite.gameId : null;
+    if (gameId !== null && this.#db.findMemberRole(gameId, user.id)) {
       this.#joinFailures.giveBack(key, now);
-      return { gameId: invite.gameId };
+      return { gameId };
     }
-    if (!invite || invite.uses >= invite.maxUses) throw new ApiError("invite.notFound");
+    if (!invite || gameId === null || invite.uses >= invite.maxUses) throw new ApiError("invite.notFound");
     if (invite.expiresAt <= now) throw new ApiError("invite.expired");
     const joined = this.#db.transaction(() => {
       // Joined in between by a parallel request of the same user.
-      if (this.#db.findMemberRole(invite.gameId, user.id)) return false;
+      if (this.#db.findMemberRole(gameId, user.id)) return false;
       // Parallel joins may have used the last one up in between.
       if (!this.#db.useInvite(codeHash, "game", now)) throw new ApiError("invite.notFound");
-      return this.#db.insertMember(invite.gameId, user.id, "player", now);
+      return this.#db.insertMember(gameId, user.id, "player", now);
     });
     this.#joinFailures.giveBack(key, now);
-    if (joined) this.#changed(invite.gameId);
-    return { gameId: invite.gameId };
+    if (joined) this.#changed(gameId);
+    return { gameId };
+  }
+
+  /** Someone joined the game on registering with an administrator's invite (R43): the others see the new member. */
+  memberRegistered(gameId: number): void {
+    this.#changed(gameId);
   }
 
   /**
